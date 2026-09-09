@@ -1,0 +1,54 @@
+services:
+  db:
+    build: ./infra/postgres
+    image: weathergpt-db-local:pg16
+    container_name: weathergpt-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: weathergpt
+      POSTGRES_PASSWORD: weathergpt_dev_password
+    command: ["postgres", "-c", "shared_preload_libraries=timescaledb"]
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./infra/postgres/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7
+    container_name: weathergpt-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  mqtt:
+    image: eclipse-mosquitto:2
+    container_name: weathergpt-mqtt
+    restart: unless-stopped
+    ports:
+      - "1883:1883"
+    volumes:
+      - ./infra/mosquitto/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+      - mqttdata:/mosquitto/data
+      - mqttlog:/mosquitto/log
+
+volumes:
+  pgdata:
+  redisdata:
+  mqttdata:
+  mqttlog:
+
+# frontend/backend services intentionally NOT included yet — no Dockerfiles
+# exist; run them locally until a later pass containerizes app code (DEP-2).

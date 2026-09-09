@@ -1,0 +1,293 @@
+@import "tailwindcss";
+
+@theme inline {
+  --font-sans: var(--font-inter);
+  --font-mono: var(--font-geist-mono);
+}
+
+@theme {
+  --color-bg-app: #161616;
+  --color-bg-shell: #1c1c1e;
+  --color-surface-1: #232326;
+  --color-surface-2: #2a2a2d;
+  --color-surface-3: #323235;
+  --color-border-subtle: #333336;
+  --color-border-strong: #3f3f42;
+  --color-text-primary: #f5f5f7;
+  --color-text-secondary: #a0a0a5;
+  --color-text-tertiary: #6e6e73;
+  /* Deliberately NOT theme-swapped below — used for text on the hero card's
+     light gradient and on solid-accent buttons, both constant across themes. */
+  --color-text-inverse: #1a1a1c;
+  --color-accent-primary: #5b9bd5;
+  --color-accent-primary-soft: #bfe0f5;
+  --color-accent-primary-soft-2: #dceef9;
+  --color-accent-secondary: #c9b6ea;
+  --color-accent-warning: #f2b84b;
+  --color-success: #4caf6d;
+  --color-alert: #e0637a;
+
+  --radius-sm: 8px;
+  --radius-md: 14px;
+  --radius-lg: 20px;
+  --radius-xl: 28px;
+}
+
+/* Light theme — overrides only the neutral surface/text tokens. Accent
+   colors and --color-text-inverse stay constant across both themes. */
+[data-theme="light"] {
+  --color-bg-app: #eef0f2;
+  --color-bg-shell: #ffffff;
+  --color-surface-1: #f5f5f7;
+  --color-surface-2: #eaeaed;
+  --color-surface-3: #dcdce0;
+  --color-border-subtle: #e2e2e5;
+  --color-border-strong: #c9c9cf;
+  --color-text-primary: #1a1a1c;
+  --color-text-secondary: #5b5b60;
+  --color-text-tertiary: #85858b;
+}
+
+body {
+  background: var(--color-bg-app);
+  color: var(--color-text-primary);
+  font-family: var(--font-sans), Arial, Helvetica, sans-serif;
+}
+
+/* Themed scrollbar for normal scroll areas (page, chat panel, etc.) instead
+   of the default OS-styled bar. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-surface-3) transparent;
+}
+*::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+*::-webkit-scrollbar-thumb {
+  background-color: var(--color-surface-3);
+  border-radius: 999px;
+}
+
+/* For decorative horizontal overflow (the forecast day-card row) where a
+   visible bar isn't wanted at all — scrolling still works via drag/wheel. */
+.no-scrollbar {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+
+@keyframes chat-panel-in {
+  from {
+    opacity: 0;
+    transform: scale(0.92) translateY(16px);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+}
+
+/* Decorative rotating-globe accent (GlobePanel's idle/transition state).
+   background-size is fixed (not "auto 100%") so background-position-x can
+   shift by exactly one tile width (-512px) per loop — a seamless wrap
+   regardless of the container's rendered size, since the world texture's
+   left/right edges are the same meridian (a true 360° cylindrical wrap). */
+.globe-texture {
+  background-image: url("/globe-texture.jpg");
+  background-repeat: repeat-x;
+  background-size: 512px 512px;
+  background-position-y: center;
+  animation: globe-spin 14s linear infinite;
+}
+
+@keyframes globe-spin {
+  from {
+    background-position-x: 0;
+  }
+  to {
+    background-position-x: -512px;
+  }
+}
+
+/* Ambient weather overlay on the settled map (WeatherOverlay.tsx) — matches
+   the searched place's real current condition. */
+
+/* A single droplet: a fading gradient "smear" with a glossy bead (the ::after
+   circle, off-center highlight for a wet-glass look) at its leading edge.
+   The whole shape moves as one rigid unit via droplet-fall below — cheaper
+   and just as convincing as animating a separate trail element in sync. */
+.rain-droplet {
+  position: absolute;
+  top: 0;
+  width: 3px;
+  border-radius: 2px 2px 3px 3px / 2px 2px 5px 5px;
+  background: linear-gradient(
+    to bottom,
+    transparent 0%,
+    rgba(190, 210, 255, 0.1) 30%,
+    rgba(200, 220, 255, 0.32) 60%,
+    rgba(222, 233, 255, 0.62) 82%,
+    rgba(255, 255, 255, 0.95) 100%
+  );
+  animation-name: droplet-fall;
+  animation-timing-function: linear;
+  animation-iteration-count: infinite;
+}
+
+.rain-droplet::after {
+  content: "";
+  position: absolute;
+  bottom: 1px;
+  left: 50%;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  transform: translateX(-50%);
+  background: radial-gradient(
+    circle at 35% 30%,
+    rgba(255, 255, 255, 0.95),
+    rgba(210, 225, 255, 0.55) 55%,
+    rgba(180, 200, 240, 0.25) 80%,
+    transparent 100%
+  );
+}
+
+/* Real raindrops on glass don't fall at constant speed — surface tension
+   holds them briefly ("stick"), then they suddenly slide ("slip"). This
+   pause/slide/pause/slide profile (vs. one smooth linear fall) is what
+   actually sells the "water on a window" look rather than generic rain. */
+@keyframes droplet-fall {
+  0% {
+    transform: translateY(-50px);
+    opacity: 0;
+  }
+  8% {
+    opacity: 0.95;
+  }
+  35% {
+    transform: translateY(60px);
+  }
+  44% {
+    transform: translateY(66px);
+  }
+  75% {
+    transform: translateY(260px);
+  }
+  82% {
+    transform: translateY(270px);
+  }
+  97% {
+    transform: translateY(400px);
+    opacity: 0.9;
+  }
+  100% {
+    transform: translateY(420px);
+    opacity: 0;
+  }
+}
+
+/* Condensation on glass ("rain", the gentler look) — a dense field of small
+   round droplets clinging to the pane, plus a handful of larger ones slowly
+   sliding down. Round (not elongated like .rain-droplet) since these are
+   meant to look stuck/beaded rather than actively streaking — storm still
+   uses .rain-droplet for a more intense, fast-streaking feel. */
+.condensation-dot {
+  position: absolute;
+  border-radius: 50%;
+  background: radial-gradient(
+    circle at 32% 28%,
+    rgba(255, 255, 255, 0.85),
+    rgba(210, 225, 245, 0.4) 45%,
+    rgba(180, 200, 230, 0.16) 75%,
+    transparent 100%
+  );
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1);
+}
+
+.condensation-slider {
+  position: absolute;
+  top: 0;
+  border-radius: 50%;
+  background: radial-gradient(
+    circle at 32% 28%,
+    rgba(255, 255, 255, 0.92),
+    rgba(210, 225, 245, 0.5) 45%,
+    rgba(180, 200, 230, 0.22) 78%,
+    transparent 100%
+  );
+  /* Stands in for a trailing wet smear without a second animated element. */
+  box-shadow:
+    0 -16px 12px -6px rgba(200, 220, 255, 0.2),
+    0 1px 2px rgba(0, 0, 0, 0.1);
+  animation-name: droplet-fall;
+  animation-timing-function: linear;
+  animation-iteration-count: infinite;
+}
+
+@keyframes storm-flash {
+  0%,
+  92%,
+  100% {
+    opacity: 0;
+  }
+  93%,
+  95% {
+    opacity: 0.45;
+  }
+  94% {
+    opacity: 0.12;
+  }
+}
+
+/* Fixed pixel distances, not percentages — `translateY(%)` resolves against
+   the flake's OWN (tiny, ~4px) box, not the panel, so a percentage value
+   here would barely move it at all. 360px comfortably covers the panel's
+   tallest breakpoint (lg:h-[360px]); on shorter breakpoints the fall just
+   continues a bit past the visible area before looping, which is invisible
+   since the panel clips with overflow-hidden. */
+@keyframes snow-fall {
+  0% {
+    transform: translateY(-20px) translateX(0);
+    opacity: 0;
+  }
+  10% {
+    opacity: 0.85;
+  }
+  50% {
+    transform: translateY(170px) translateX(10px);
+  }
+  90% {
+    opacity: 0.85;
+  }
+  100% {
+    transform: translateY(360px) translateX(-6px);
+    opacity: 0;
+  }
+}
+
+@keyframes cloud-drift {
+  from {
+    transform: translateX(-30%);
+  }
+  to {
+    transform: translateX(130%);
+  }
+}
+
+@keyframes sun-glow {
+  0%,
+  100% {
+    opacity: 0.55;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.8;
+    transform: scale(1.08);
+  }
+}
