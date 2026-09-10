@@ -22,6 +22,10 @@ function isLocationState(value: unknown): value is LocationState {
   return typeof v.lat === "number" && typeof v.lon === "number" && typeof v.name === "string";
 }
 
+function sameLocation(a: LocationState, b: LocationState): boolean {
+  return a.lat === b.lat && a.lon === b.lon && a.name === b.name;
+}
+
 export function LocationProvider({
   initialLocation,
   children,
@@ -78,7 +82,12 @@ export function LocationProvider({
 
   const setLocation = useCallback(
     (next: LocationState, precomputedWeather?: WeatherResponse) => {
-      setLocationState(next);
+      // Keeps the same object reference when the location hasn't actually
+      // changed (e.g. chat.py resolves and re-sends the current location on
+      // every message, not just ones that name a place) — GlobePanel's
+      // fly-to/globe-reveal animation is keyed off this reference changing,
+      // so bailing out here is what stops it replaying on every chat message.
+      setLocationState((prev) => (sameLocation(prev, next) ? prev : next));
       try {
         localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
       } catch {

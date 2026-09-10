@@ -29,6 +29,11 @@ CREATE TABLE IF NOT EXISTS push_subscriptions (
     auth TEXT NOT NULL,
     lat DOUBLE PRECISION NOT NULL,
     lon DOUBLE PRECISION NOT NULL,
+    -- Free-text role the subscriber gave at onboarding (e.g. "farmer",
+    -- "pilot") — nullable, matches the frontend's optional role feature.
+    -- Used to tailor push notification wording; NULL just falls back to
+    -- the plain alert headline.
+    role TEXT,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 

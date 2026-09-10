@@ -291,3 +291,91 @@ body {
     transform: scale(1.08);
   }
 }
+
+/* Idle "alive" motion for the chat mascot avatar — a gentle float (as if
+   bobbing in the water it's standing in) plus a soft breathing glow behind
+   it, so it reads as a living character rather than a flat static image. */
+@keyframes mascot-float {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-6px);
+  }
+}
+
+@keyframes mascot-glow {
+  0%,
+  100% {
+    opacity: 0.35;
+    transform: scale(0.94);
+  }
+  50% {
+    opacity: 0.65;
+    transform: scale(1.06);
+  }
+}
+
+/* The full-screen severe-alert takeover: a bell being struck (quick
+   rotational shake, settling back to rest) inside a pulsing red ambient
+   glow — deliberately alarming, unlike the calm mascot float/glow above. */
+@keyframes bell-ring {
+  0%,
+  100% {
+    transform: rotate(0deg);
+  }
+  10% {
+    transform: rotate(-18deg);
+  }
+  20% {
+    transform: rotate(14deg);
+  }
+  30% {
+    transform: rotate(-10deg);
+  }
+  40% {
+    transform: rotate(7deg);
+  }
+  50% {
+    transform: rotate(-4deg);
+  }
+  60% {
+    transform: rotate(2deg);
+  }
+  70%,
+  100% {
+    transform: rotate(0deg);
+  }
+}
+
+@keyframes alert-glow {
+  0%,
+  100% {
+    opacity: 0.45;
+    transform: scale(0.92);
+  }
+  50% {
+    opacity: 0.85;
+    transform: scale(1.12);
+  }
+}
+
+/* The companion mascot perched above the chat panel drops in with a small
+   bounce/overshoot as the panel opens, rather than just appearing — settles
+   slightly past its resting position before easing back, for a playful
+   landing instead of a flat fade. */
+@keyframes mascot-perch-in {
+  0% {
+    opacity: 0;
+    transform: translateY(-28px) scale(0.85);
+  }
+  60% {
+    opacity: 1;
+    transform: translateY(4px) scale(1.03);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}

@@ -17,7 +17,7 @@ type ViewContextValue = {
 const ViewContext = createContext<ViewContextValue | null>(null);
 
 export function ViewProvider({ children }: { children: ReactNode }) {
-  const [activeTab, setActiveTab] = useState<Tab>("Next 7 days");
+  const [activeTab, setActiveTab] = useState<Tab>("Today");
   const [activeSegment, setActiveSegment] = useState<Segment>("Forecast");
 
   return (

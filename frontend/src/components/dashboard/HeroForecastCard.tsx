@@ -26,14 +26,10 @@ export function HeroForecastCard({ data }: { data?: HeroForecastData }) {
       )}
 
       {hasDetail && (
+        // Pressure/humidity/sunrise/sunset moved to their own widgets in
+        // WeatherMetricsPanel — kept only here what has no widget yet.
         <div className="mt-3 flex flex-col gap-1 text-[11px] leading-[1.5] opacity-65">
           <span>Wind: {f.wind}</span>
-          <span>Pressure: {f.pressure}</span>
-          <div className="flex justify-between">
-            <span>Sunrise: {f.sunrise}</span>
-            <span>Humidity: {f.humidity}</span>
-          </div>
-          <span>Sunset: {f.sunset}</span>
         </div>
       )}
     </div>

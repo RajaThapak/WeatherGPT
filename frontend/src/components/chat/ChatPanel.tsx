@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { Send, Mic, Square, Volume2, Loader2, History, ArrowLeft, Plus } from "lucide-react";
+import { Send, Mic, Square, Volume2, VolumeX, Loader2, History, ArrowLeft, Plus, ChevronDown } from "lucide-react";
 import type { ChatMessage } from "@/lib/use-chat-stream";
 import { useVoiceRecorder } from "@/lib/use-voice-recorder";
 import { transcribeAudio, synthesizeSpeech } from "@/lib/voice-api";
@@ -19,6 +19,10 @@ export function ChatPanel({
   onClose,
   onNewChat,
   onSelectSession,
+  onMessagePlayed,
+  muted,
+  onToggleMute,
+  variant = "overlay",
 }: {
   messages: DisplayMessage[];
   sessions: ChatSession[];
@@ -26,9 +30,29 @@ export function ChatPanel({
   isStreaming: boolean;
   error: string | null;
   onSend: (text: string) => void;
-  onClose: () => void;
+  onClose?: () => void;
   onNewChat: () => void;
   onSelectSession: (id: string) => void;
+  // Flips the message's autoPlay flag off in the parent's persisted state —
+  // parent state survives the panel unmounting (e.g. closing the chat on
+  // mobile), unlike a ref local to this component, so a message already
+  // auto-played doesn't replay just because the panel was reopened.
+  onMessagePlayed?: (id: string) => void;
+  // When true, new replies no longer auto-play via TTS — the per-message
+  // speaker button still works, since that's a deliberate tap, not the
+  // automatic behavior mute is meant to silence.
+  muted: boolean;
+  onToggleMute: () => void;
+  // "overlay": full-screen floating panel with a "Close" button — used on
+  // tablet/desktop widths below the docked breakpoint, or wherever a
+  // takeover panel is still wanted. "docked": fills its parent exactly, no
+  // fixed positioning/animation/rounding/close button — the permanent
+  // desktop sidebar, always visible so there's nothing to close. "inline":
+  // a normal in-flow card (not fixed) with a height cap so it grows with
+  // content but scrolls its own messages past that cap, and a collapse
+  // chevron instead of "Close" — the mobile card that sits directly in the
+  // page, pushing the rest of the dashboard down instead of covering it.
+  variant?: "overlay" | "docked" | "inline";
 }) {
   const [draft, setDraft] = useState("");
   const [playingId, setPlayingId] = useState<string | null>(null);
@@ -36,7 +60,6 @@ export function ChatPanel({
   const [historyOpen, setHistoryOpen] = useState(false);
   const listRef = useRef<HTMLDivElement>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
-  const playedRef = useRef<Set<string>>(new Set());
   const recorder = useVoiceRecorder();
 
   useEffect(() => {
@@ -49,6 +72,15 @@ export function ChatPanel({
       audioRef.current?.pause();
     };
   }, []);
+
+  // Stop immediately if the user mutes mid-playback, rather than letting
+  // whatever's already speaking finish out.
+  useEffect(() => {
+    if (muted) {
+      audioRef.current?.pause();
+      setPlayingId(null);
+    }
+  }, [muted]);
 
   const submit = () => {
     const text = draft.trim();
@@ -78,16 +110,17 @@ export function ChatPanel({
   };
 
   // Auto-play every assistant answer exactly once, whether the question was
-  // typed or spoken — the speaker icon still works on every message too.
+  // typed or spoken — unless muted, in which case still mark it played (so
+  // unmuting later doesn't cause a burst of replies from earlier).
   useEffect(() => {
     if (isStreaming) return;
     const last = messages[messages.length - 1];
-    if (last?.role === "assistant" && last.autoPlay && last.content.trim() && !playedRef.current.has(last.id)) {
-      playedRef.current.add(last.id);
-      playMessage(last.id, last.content);
+    if (last?.role === "assistant" && last.autoPlay && last.content.trim()) {
+      onMessagePlayed?.(last.id);
+      if (!muted) playMessage(last.id, last.content);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [messages, isStreaming]);
+  }, [messages, isStreaming, muted]);
 
   const toggleMic = async () => {
     if (recorder.isRecording) {
@@ -108,7 +141,17 @@ export function ChatPanel({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex flex-col overflow-hidden bg-surface-1 [animation:chat-panel-in_220ms_cubic-bezier(0.4,0,0.2,1)] sm:inset-auto sm:bottom-24 sm:right-6 sm:h-[480px] sm:w-[360px] sm:max-w-[calc(100vw-3rem)] sm:origin-bottom-right sm:rounded-lg sm:shadow-[0_12px_24px_rgba(0,0,0,0.35)]"
+      className={
+        variant === "docked"
+          ? "flex h-full w-full flex-col overflow-hidden bg-surface-1"
+          : variant === "inline"
+            ? "flex max-h-[70vh] w-full flex-col overflow-hidden rounded-lg bg-surface-1 shadow-[0_8px_20px_rgba(0,0,0,0.15)] [animation:chat-panel-in_220ms_cubic-bezier(0.4,0,0.2,1)]"
+            : // "overlay": fills whatever box its parent gives it — the
+              // parent (ChatFloating) owns the actual fixed position/size,
+              // so ChatMascotPerch can anchor to that same box instead of
+              // needing to independently guess where this panel ends up.
+              "flex h-full w-full flex-col overflow-hidden rounded-lg bg-surface-1 shadow-[0_12px_24px_rgba(0,0,0,0.35)] [animation:chat-panel-in_220ms_cubic-bezier(0.4,0,0.2,1)]"
+      }
     >
       <div className="flex items-center justify-between border-b border-border-subtle px-4 py-3">
         <div className="flex items-center gap-1.5">
@@ -129,6 +172,15 @@ export function ChatPanel({
             <>
               <button
                 type="button"
+                onClick={onToggleMute}
+                aria-label={muted ? "Unmute replies" : "Mute replies"}
+                aria-pressed={muted}
+                className="text-text-secondary transition-colors duration-[120ms] hover:text-text-primary"
+              >
+                {muted ? <VolumeX size={16} strokeWidth={1.75} /> : <Volume2 size={16} strokeWidth={1.75} />}
+              </button>
+              <button
+                type="button"
                 onClick={onNewChat}
                 aria-label="New chat"
                 className="text-text-secondary transition-colors duration-[120ms] hover:text-text-primary"
@@ -145,14 +197,26 @@ export function ChatPanel({
               </button>
             </>
           )}
-          <button type="button" onClick={onClose} className="text-xs text-text-secondary hover:text-text-primary">
-            Close
-          </button>
+          {variant === "overlay" && (
+            <button type="button" onClick={onClose} className="text-xs text-text-secondary hover:text-text-primary">
+              Close
+            </button>
+          )}
+          {variant === "inline" && (
+            <button
+              type="button"
+              onClick={onClose}
+              aria-label="Collapse chat"
+              className="text-text-secondary transition-colors duration-[120ms] hover:text-text-primary"
+            >
+              <ChevronDown size={16} strokeWidth={1.75} />
+            </button>
+          )}
         </div>
       </div>
 
       {historyOpen ? (
-        <div className="flex-1 overflow-y-auto p-2">
+        <div className="min-h-0 flex-1 overflow-y-auto p-2">
           {sessions.length === 0 ? (
             <p className="p-3 text-sm text-text-tertiary">No past conversations yet.</p>
           ) : (
@@ -179,7 +243,7 @@ export function ChatPanel({
         </div>
       ) : (
         <>
-          <div ref={listRef} className="flex-1 space-y-3 overflow-y-auto p-4">
+          <div ref={listRef} className="min-h-0 flex-1 space-y-3 overflow-y-auto p-4">
             {messages.length === 0 && (
               <p className="text-sm text-text-tertiary">
                 Ask me about the weather anywhere — e.g. &quot;what&apos;s the weather in Tokyo?&quot; — by typing or
@@ -212,7 +276,11 @@ export function ChatPanel({
             {voiceError && <div className="rounded-lg bg-alert/15 px-3 py-2 text-xs text-alert">{voiceError}</div>}
           </div>
 
-          <div className="flex items-center gap-2 border-t border-border-subtle p-3 pb-[calc(0.75rem+env(safe-area-inset-bottom))] sm:pb-3">
+          <div
+            className={`flex items-center gap-2 border-t border-border-subtle p-3 ${
+              variant === "overlay" ? "pb-[calc(0.75rem+env(safe-area-inset-bottom))] sm:pb-3" : ""
+            }`}
+          >
             <button
               type="button"
               onClick={toggleMic}

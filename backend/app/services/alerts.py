@@ -27,6 +27,7 @@ class AlertResponse(BaseModel):
     area_desc: str
     onset: datetime
     expires: datetime
+    sent: datetime
 
 
 def _text(info: ET.Element, tag: str) -> str | None:
@@ -158,6 +159,76 @@ async def fetch_and_ingest_alerts() -> int:
     return ingested
 
 
+ROLE_KEYWORDS: dict[str, tuple[str, ...]] = {
+    "farmer": ("farm",),
+    "pilot": ("pilot", "fly", "aviat"),
+    "fisherman": ("fish", "sail", "boat", "marine"),
+    "commuter": ("commut", "bike", "cycl", "walk", "rider", "deliver"),
+    "construction": ("construct", "site", "outdoor", "labour", "labor"),
+}
+
+EVENT_KEYWORDS: dict[str, tuple[str, ...]] = {
+    "rain": ("rain", "flood", "shower"),
+    "heat": ("heat", "hot"),
+    "wind": ("wind", "cyclone", "storm", "gale"),
+    "cold": ("cold", "frost", "chill"),
+    "fog": ("fog", "mist", "visibility"),
+}
+
+# (event_bucket, role_bucket) -> short action cue prepended to the alert's
+# own headline. Only combinations worth calling out explicitly are listed —
+# anything else falls back to the plain headline, unchanged, so a
+# not-yet-covered event/role combo behaves exactly like today.
+ADVISORY_PREFIXES: dict[tuple[str, str], str] = {
+    ("rain", "farmer"): "Hold off spraying, check field drainage — ",
+    ("rain", "commuter"): "Expect delays, carry rain gear — ",
+    ("rain", "construction"): "Plan for delays on exterior work — ",
+    ("wind", "fisherman"): "Avoid going out to sea — ",
+    ("wind", "pilot"): "Expect turbulence, check NOTAMs — ",
+    ("wind", "construction"): "Secure loose materials and scaffolding — ",
+    ("heat", "construction"): "Reschedule strenuous work to cooler hours — ",
+    ("heat", "farmer"): "Water crops/livestock early, avoid midday exposure — ",
+    ("cold", "farmer"): "Protect frost-sensitive crops — ",
+    ("fog", "pilot"): "Expect low-visibility delays, check NOTAMs — ",
+    ("fog", "commuter"): "Allow extra travel time, low visibility — ",
+}
+
+
+def _role_bucket(role: str | None) -> str | None:
+    if not role:
+        return None
+    lowered = role.lower()
+    for bucket, keywords in ROLE_KEYWORDS.items():
+        if any(kw in lowered for kw in keywords):
+            return bucket
+    return None
+
+
+def _event_bucket(event: str, headline: str) -> str | None:
+    lowered = f"{event} {headline}".lower()
+    for bucket, keywords in EVENT_KEYWORDS.items():
+        if any(kw in lowered for kw in keywords):
+            return bucket
+    return None
+
+
+def _tailor_body(event: str, headline: str, role: str | None) -> str:
+    """Prefixes the alert's real headline with a short role-specific action
+    cue when both the alert type and the subscriber's role are recognized —
+    never invents or replaces IMD's own wording, just adds a cue in front of
+    it. Falls back to the plain headline otherwise (no role set, role
+    doesn't match a known bucket, or this event/role pairing isn't one of
+    the ones worth calling out) — identical to today's behavior."""
+    role_bucket = _role_bucket(role)
+    if role_bucket is None:
+        return headline
+    event_bucket = _event_bucket(event, headline)
+    if event_bucket is None:
+        return headline
+    prefix = ADVISORY_PREFIXES.get((event_bucket, role_bucket))
+    return f"{prefix}{headline}" if prefix else headline
+
+
 async def dispatch_new_alerts() -> int:
     """Finds (subscription, active alert) pairs not yet notified and sends a
     Web Push for each. Returns how many pushes were sent."""
@@ -169,7 +240,7 @@ async def dispatch_new_alerts() -> int:
     async with pool.acquire() as conn:
         rows = await conn.fetch(
             """
-            SELECT s.id AS subscription_id, s.endpoint, s.p256dh, s.auth,
+            SELECT s.id AS subscription_id, s.endpoint, s.p256dh, s.auth, s.role,
                    a.id AS alert_id, a.event, a.headline, a.severity
             FROM push_subscriptions s
             JOIN weather_alerts a
@@ -189,10 +260,16 @@ async def dispatch_new_alerts() -> int:
             "keys": {"p256dh": row["p256dh"], "auth": row["auth"]},
         }
         try:
+            body = _tailor_body(row["event"], row["headline"], row["role"])
             webpush(
                 subscription_info=subscription_info,
                 data=json.dumps(
-                    {"title": row["event"], "body": row["headline"], "severity": row["severity"]}
+                    {
+                        "title": row["event"],
+                        "body": body,
+                        "severity": row["severity"],
+                        "alertId": row["alert_id"],
+                    }
                 ),
                 vapid_private_key=settings.vapid_private_key,
                 vapid_claims={"sub": settings.vapid_subject},
@@ -231,7 +308,7 @@ async def get_active_alerts(lat: float, lon: float) -> list[AlertResponse]:
         rows = await conn.fetch(
             """
             SELECT id, event, headline, description, instruction, severity,
-                   urgency, certainty, area_desc, onset, expires
+                   urgency, certainty, area_desc, onset, expires, sent
             FROM weather_alerts
             WHERE expires > now()
               AND ST_Contains(area, ST_SetSRID(ST_MakePoint($1, $2), 4326))
@@ -243,21 +320,25 @@ async def get_active_alerts(lat: float, lon: float) -> list[AlertResponse]:
     return [AlertResponse(**dict(row)) for row in rows]
 
 
-async def upsert_subscription(endpoint: str, p256dh: str, auth: str, lat: float, lon: float) -> None:
+async def upsert_subscription(
+    endpoint: str, p256dh: str, auth: str, lat: float, lon: float, role: str | None = None
+) -> None:
     pool = await get_pool(settings.database_url)
     async with pool.acquire() as conn:
         await conn.execute(
             """
-            INSERT INTO push_subscriptions (endpoint, p256dh, auth, lat, lon)
-            VALUES ($1, $2, $3, $4, $5)
+            INSERT INTO push_subscriptions (endpoint, p256dh, auth, lat, lon, role)
+            VALUES ($1, $2, $3, $4, $5, $6)
             ON CONFLICT (endpoint) DO UPDATE SET p256dh = EXCLUDED.p256dh,
-                auth = EXCLUDED.auth, lat = EXCLUDED.lat, lon = EXCLUDED.lon
+                auth = EXCLUDED.auth, lat = EXCLUDED.lat, lon = EXCLUDED.lon,
+                role = EXCLUDED.role
             """,
             endpoint,
             p256dh,
             auth,
             lat,
             lon,
+            role,
         )
 
 

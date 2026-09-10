@@ -34,23 +34,6 @@ export const rainChance: { label: string; value: number }[] = [
   { label: "3PM", value: 0.3 },
 ];
 
-export const otherCities: {
-  country: string;
-  city: string;
-  condition: string;
-  tempC: number;
-  kind: WeatherKind;
-}[] = [
-  { country: "US", city: "California", condition: "Mostly Sunny", tempC: 29, kind: "sun" },
-  { country: "China", city: "Beijing", condition: "Cloudy", tempC: 19, kind: "cloud" },
-  { country: "Israel", city: "Jerusalem", condition: "Sunny", tempC: 31, kind: "sun" },
-  { country: "UK", city: "London", condition: "Rainy", tempC: 14, kind: "rain" },
-  { country: "Japan", city: "Tokyo", condition: "Partly Cloudy", tempC: 24, kind: "cloud-sun" },
-  { country: "UAE", city: "Dubai", condition: "Sunny", tempC: 38, kind: "sun" },
-  { country: "France", city: "Paris", condition: "Cloudy", tempC: 17, kind: "cloud" },
-  { country: "Australia", city: "Sydney", condition: "Sunny", tempC: 22, kind: "sun" },
-];
-
 export const globeMarkers: { name: string; location: [number, number]; size: number }[] = [
   { name: "Delhi", location: [28.6139, 77.209], size: 0.05 },
   { name: "Mumbai", location: [19.076, 72.8777], size: 0.05 },

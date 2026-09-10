@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { AlertTriangle, X } from "lucide-react";
 import { useAlerts } from "@/lib/alerts-context";
+import { formatRelativeTime } from "@/lib/chat-storage";
 
 const DISMISSED_KEY = "weathergpt:dismissed-alerts";
 const HIGH_SEVERITY = new Set(["Extreme", "Severe"]);
@@ -49,6 +50,9 @@ export function AlertBanner() {
           <div className="flex-1">
             <span className="font-semibold">{a.headline}</span>
             <span className="ml-1.5 text-xs opacity-80">{a.area_desc}</span>
+            <div className="mt-0.5 text-[11px] opacity-60">
+              Source: IMD CAP feed · issued {formatRelativeTime(new Date(a.sent).getTime())}
+            </div>
           </div>
           <button
             type="button"

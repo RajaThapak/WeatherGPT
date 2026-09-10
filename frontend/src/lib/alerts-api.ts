@@ -10,6 +10,7 @@ export type WeatherAlert = {
   area_desc: string;
   onset: string;
   expires: string;
+  sent: string;
 };
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
@@ -24,6 +25,7 @@ export async function postSubscription(
   subscription: PushSubscriptionJSON,
   lat: number,
   lon: number,
+  role: string | null,
 ): Promise<void> {
   const res = await fetch(`${API_URL}/api/alerts/subscribe`, {
     method: "POST",
@@ -33,6 +35,7 @@ export async function postSubscription(
       keys: subscription.keys,
       lat,
       lon,
+      role,
     }),
   });
   if (!res.ok) throw new Error(`Subscribe failed: HTTP ${res.status}`);

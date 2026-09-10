@@ -2,10 +2,18 @@ import type { WeatherResponse } from "./weather-api";
 
 export type ChatMessage = { role: "user" | "assistant"; content: string };
 export type ChatLocationEvent = { lat: number; lon: number; name: string; source: string };
+// Real, executable actions the backend detected in the user's message —
+// the frontend is what actually performs the side effect (see
+// chat-context.tsx); the backend only detects intent and tells the model
+// to confirm it in words.
+export type ChatActionEvent =
+  | { type: "subscribe_alerts" }
+  | { type: "set_role"; role: string };
 
 type Callbacks = {
   onLocation?: (loc: ChatLocationEvent) => void;
   onWeather?: (weather: WeatherResponse) => void;
+  onAction?: (action: ChatActionEvent) => void;
   onToken?: (text: string) => void;
   onDone?: () => void;
   onError?: (message: string) => void;
@@ -18,6 +26,7 @@ export async function streamChat(
     message: string;
     history: ChatMessage[];
     location: { lat: number; lon: number; name: string } | null;
+    role?: string | null;
   },
   callbacks: Callbacks,
   signal?: AbortSignal,
@@ -80,6 +89,9 @@ function dispatch(rawEvent: string, callbacks: Callbacks) {
       break;
     case "weather":
       callbacks.onWeather?.(data as WeatherResponse);
+      break;
+    case "action":
+      callbacks.onAction?.(data as ChatActionEvent);
       break;
     case "token":
       callbacks.onToken?.((data as { text: string }).text);

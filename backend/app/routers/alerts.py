@@ -29,11 +29,14 @@ class SubscribeRequest(BaseModel):
     keys: SubscriptionKeys
     lat: float
     lon: float
+    role: str | None = None
 
 
 @router.post("/alerts/subscribe")
 async def subscribe(body: SubscribeRequest) -> dict:
-    await upsert_subscription(body.endpoint, body.keys.p256dh, body.keys.auth, body.lat, body.lon)
+    await upsert_subscription(
+        body.endpoint, body.keys.p256dh, body.keys.auth, body.lat, body.lon, body.role
+    )
     return {"status": "subscribed"}
 
 
