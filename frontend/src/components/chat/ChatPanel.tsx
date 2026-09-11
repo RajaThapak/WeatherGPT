@@ -79,6 +79,11 @@ export function ChatPanel({
   const listRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
+  // Aborts the whole sentence queue (not just the currently-playing clip) —
+  // set while a playMessage() call is in flight, cleared when it finishes
+  // or is stopped. Needed because pausing the <audio> element alone doesn't
+  // stop the queue from moving on to synthesize/play the next sentence.
+  const stopPlaybackRef = useRef<(() => void) | null>(null);
   const recorder = useVoiceRecorder();
 
   useEffect(() => {
@@ -88,7 +93,7 @@ export function ChatPanel({
   // Stop any in-progress speech immediately when the panel closes (unmounts).
   useEffect(() => {
     return () => {
-      audioRef.current?.pause();
+      stopPlaybackRef.current?.();
     };
   }, []);
 
@@ -96,7 +101,7 @@ export function ChatPanel({
   // whatever's already speaking finish out.
   useEffect(() => {
     if (muted) {
-      audioRef.current?.pause();
+      stopPlaybackRef.current?.();
       setPlayingId(null);
     }
   }, [muted]);
@@ -108,22 +113,61 @@ export function ChatPanel({
     setDraft("");
   };
 
+  // Splits a reply into sentence-sized chunks so speech can start on the
+  // FIRST sentence almost immediately, instead of waiting for Sarvam to
+  // synthesize the entire reply before any audio plays — that full-message
+  // round trip was the source of the noticeable delay after longer replies.
+  // Falls back to the whole text as one "sentence" if no punctuation is found.
+  function splitIntoSentences(text: string): string[] {
+    const matches = text.match(/[^.!?]+[.!?]+(\s+|$)/g);
+    if (!matches || matches.length === 0) return [text.trim()];
+    return matches.map((s) => s.trim()).filter(Boolean);
+  }
+
   const playMessage = async (id: string, text: string) => {
     if (!text.trim() || playingId) return;
     setPlayingId(id);
     setVoiceError(null);
+
+    let stopped = false;
+    stopPlaybackRef.current = () => {
+      stopped = true;
+      audioRef.current?.pause();
+    };
+
+    const sentences = splitIntoSentences(text);
     try {
-      const blob = await synthesizeSpeech(text);
-      const url = URL.createObjectURL(blob);
-      const audio = new Audio(url);
-      audioRef.current = audio;
-      audio.onended = () => {
-        setPlayingId(null);
-        URL.revokeObjectURL(url);
-      };
-      await audio.play();
+      // Kick off synthesis for the first sentence immediately; each
+      // subsequent sentence's synthesis is kicked off as soon as the
+      // previous one starts playing, so it's usually ready by the time
+      // its turn comes — audio keeps flowing without a per-sentence gap.
+      let nextBlob: Promise<Blob> | null = synthesizeSpeech(sentences[0]);
+      for (let i = 0; i < sentences.length && !stopped; i++) {
+        // Non-null: only ever null past the last iteration, which the loop
+        // condition above already prevents us from reaching.
+        const blob = await nextBlob!;
+        if (stopped) break;
+        nextBlob = i + 1 < sentences.length ? synthesizeSpeech(sentences[i + 1]) : null;
+
+        const url = URL.createObjectURL(blob);
+        const audio = new Audio(url);
+        audioRef.current = audio;
+        await new Promise<void>((resolve) => {
+          audio.onended = () => {
+            URL.revokeObjectURL(url);
+            resolve();
+          };
+          audio.onerror = () => {
+            URL.revokeObjectURL(url);
+            resolve();
+          };
+          audio.play().catch(() => resolve());
+        });
+      }
     } catch (err) {
       setVoiceError(err instanceof Error ? err.message : "Couldn't play audio");
+    } finally {
+      stopPlaybackRef.current = null;
       setPlayingId(null);
     }
   };
