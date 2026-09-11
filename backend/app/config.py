@@ -44,15 +44,14 @@ class Settings(BaseSettings):
     jwt_algorithm: str = "HS256"
     jwt_expires_minutes: int = 60 * 24 * 7
 
-    # Proactive weather alerts — morning/evening digests plus a sudden-change
-    # watcher, delivered by email over Gmail SMTP. Blank username/password
-    # means the feature is a no-op (logs and skips sending) rather than
-    # failing, same as the other optional API keys above.
-    smtp_host: str = "smtp.gmail.com"
-    smtp_port: int = 587
-    smtp_username: str = ""
-    smtp_password: str = ""
-    smtp_from_name: str = "WeatherGPT"
+    # Proactive weather alerts — morning/evening/night digests plus a
+    # sudden-change watcher, delivered via Brevo's transactional email API
+    # (HTTPS, not SMTP — Render's free tier blocks outbound SMTP ports
+    # entirely). Blank api key means the feature is a no-op (logs and skips
+    # sending) rather than failing, same as the other optional API keys above.
+    brevo_api_key: str = ""
+    brevo_sender_email: str = ""
+    brevo_sender_name: str = "WeatherGPT"
     weather_alert_watch_interval_seconds: int = 600
     weather_alert_rain_probability_threshold: int = 60
     weather_alert_change_threshold_pct: int = 30

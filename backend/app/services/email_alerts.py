@@ -1,33 +1,40 @@
 import logging
-import smtplib
 from datetime import date, datetime, timedelta
-from email.mime.text import MIMEText
 from zoneinfo import ZoneInfo
 
 from app.config import settings
 from app.db import get_pool
+from app.http_client import get_http_client
 from app.services.weather import get_weather
 
 logger = logging.getLogger("weathergpt.email_alerts")
 IST = ZoneInfo("Asia/Kolkata")
 
+BREVO_SEND_URL = "https://api.brevo.com/v3/smtp/email"
 
-def send_email_alert(to_email: str, subject: str, body: str) -> bool:
-    """Sends via Gmail SMTP. Returns False (and just logs) rather than
-    raising when SMTP isn't configured or the send fails — a delivery
-    hiccup should never take down the watch loop."""
-    if not settings.smtp_username or not settings.smtp_password:
-        logger.info("SMTP not configured — skipping email to %s: %s", to_email, subject)
+
+async def send_email_alert(to_email: str, subject: str, body: str) -> bool:
+    """Sends via Brevo's transactional email API (HTTPS, not SMTP) — Render's
+    free tier blocks outbound SMTP ports entirely, which is why this isn't
+    plain smtplib. Returns False (and just logs) rather than raising when
+    Brevo isn't configured or the send fails — a delivery hiccup should
+    never take down the watch loop."""
+    if not settings.brevo_api_key or not settings.brevo_sender_email:
+        logger.info("Brevo not configured — skipping email to %s: %s", to_email, subject)
         return False
     try:
-        msg = MIMEText(body, _charset="utf-8")
-        msg["Subject"] = subject
-        msg["From"] = f"{settings.smtp_from_name} <{settings.smtp_username}>"
-        msg["To"] = to_email
-        with smtplib.SMTP(settings.smtp_host, settings.smtp_port) as server:
-            server.starttls()
-            server.login(settings.smtp_username, settings.smtp_password)
-            server.sendmail(settings.smtp_username, [to_email], msg.as_string())
+        http = get_http_client()
+        resp = await http.post(
+            BREVO_SEND_URL,
+            headers={"api-key": settings.brevo_api_key, "Content-Type": "application/json"},
+            json={
+                "sender": {"email": settings.brevo_sender_email, "name": settings.brevo_sender_name},
+                "to": [{"email": to_email}],
+                "subject": subject,
+                "textContent": body,
+            },
+        )
+        resp.raise_for_status()
         return True
     except Exception as exc:
         logger.warning("Email send to %s failed: %s", to_email, exc)
@@ -148,7 +155,7 @@ async def _check_one_user(row, now_ist: datetime, today: date) -> int:
         and is_rain_expected
     ):
         subject, body = _morning_email(location_name, max_probability)
-        if send_email_alert(row["email"], subject, body):
+        if await send_email_alert(row["email"], subject, body):
             morning_sent_date = today
             sent += 1
     elif (
@@ -157,7 +164,7 @@ async def _check_one_user(row, now_ist: datetime, today: date) -> int:
         and is_rain_expected
     ):
         subject, body = _evening_email(location_name, max_probability)
-        if send_email_alert(row["email"], subject, body):
+        if await send_email_alert(row["email"], subject, body):
             evening_sent_date = today
             sent += 1
     elif (
@@ -167,7 +174,7 @@ async def _check_one_user(row, now_ist: datetime, today: date) -> int:
         and change_alert_sent_date != today
     ):
         subject, body = _change_email(location_name, max_probability)
-        if send_email_alert(row["email"], subject, body):
+        if await send_email_alert(row["email"], subject, body):
             change_alert_sent_date = today
             sent += 1
 
@@ -178,7 +185,7 @@ async def _check_one_user(row, now_ist: datetime, today: date) -> int:
         tomorrow_morning_probability = _tomorrow_morning_max_precip(weather.hourly, now_ist)
         if tomorrow_morning_probability is not None and tomorrow_morning_probability >= threshold:
             subject, body = _night_email(location_name, tomorrow_morning_probability)
-            if send_email_alert(row["email"], subject, body):
+            if await send_email_alert(row["email"], subject, body):
                 night_sent_date = today
                 sent += 1
 

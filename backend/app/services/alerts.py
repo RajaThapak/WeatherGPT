@@ -355,7 +355,7 @@ async def dispatch_email_alerts() -> int:
             row["event"], row["headline"], row["description"], row["instruction"],
             row["severity"], row["area_desc"],
         )
-        if not send_email_alert(row["email"], subject, body):
+        if not await send_email_alert(row["email"], subject, body):
             # Don't mark as notified — a delivery hiccup should still be
             # retried on the next poll cycle, not silently skipped forever.
             continue
