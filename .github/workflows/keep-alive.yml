@@ -1,9 +1,10 @@
-name: Keep backend awake
+name: Keep frontend and backend awake
 
 on:
   schedule:
     # Every 10 minutes — Render's free tier sleeps after ~15 min idle;
-    # this keeps the backend (and its alert-check background loops) running.
+    # this keeps the backend (and its alert-check background loops)
+    # running, and keeps the frontend from cold-starting for visitors.
     - cron: "*/10 * * * *"
   workflow_dispatch: {}
 
@@ -13,3 +14,5 @@ jobs:
     steps:
       - name: Ping backend health endpoint
         run: curl -sf https://weathergpt-backend-p0ho.onrender.com/health || true
+      - name: Ping frontend homepage
+        run: curl -sf https://weathergpt-frontend-4jgw.onrender.com/ -o /dev/null || true
