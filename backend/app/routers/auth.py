@@ -20,14 +20,26 @@ router = APIRouter(prefix="/api/auth", tags=["auth"])
 COOKIE_MAX_AGE = settings.jwt_expires_minutes * 60
 
 
+_IS_PRODUCTION = settings.environment == "production"
+# In production the frontend and backend live on different Render
+# subdomains — different "sites" as far as the browser is concerned, since
+# onrender.com is a registered public suffix — so the session cookie needs
+# SameSite=None to survive the cross-site fetch() the frontend makes on
+# every page load to check "am I logged in?". SameSite=None requires
+# Secure=True, which is already true in production. Locally, frontend and
+# backend are both on localhost (same site, different ports only), so
+# Lax works fine and is the safer default there.
+_COOKIE_SAMESITE = "none" if _IS_PRODUCTION else "lax"
+
+
 def _set_session_cookie(response: Response, user_id: int) -> None:
     response.set_cookie(
         key=COOKIE_NAME,
         value=create_session_token(user_id),
         max_age=COOKIE_MAX_AGE,
         httponly=True,
-        samesite="lax",
-        secure=settings.environment == "production",
+        samesite=_COOKIE_SAMESITE,
+        secure=_IS_PRODUCTION,
         path="/",
     )
 
@@ -79,7 +91,9 @@ async def login(body: LoginRequest, response: Response) -> UserOut:
 
 @router.post("/logout")
 async def logout(response: Response) -> dict:
-    response.delete_cookie(COOKIE_NAME, path="/")
+    # Must match the attributes the cookie was set with, or some browsers
+    # won't recognize this as clearing the same cookie.
+    response.delete_cookie(COOKIE_NAME, path="/", samesite=_COOKIE_SAMESITE, secure=_IS_PRODUCTION)
     return {"status": "logged_out"}
 
 
