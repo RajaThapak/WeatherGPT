@@ -9,6 +9,7 @@ from app.cache import get_redis
 from app.config import settings
 from app.db import get_pool
 from app.http_client import close_http_client
+from app.migrate import run_migrations
 from app.routers import air_quality, alerts, auth, chat, voice, weather
 from app.services.alerts import dispatch_email_alerts, dispatch_new_alerts, fetch_and_ingest_alerts
 from app.services.email_alerts import check_weather_changes
@@ -45,6 +46,11 @@ async def _email_alert_watch_loop() -> None:
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
+    try:
+        await run_migrations()
+    except Exception:
+        logger.exception("Startup migrations failed")
+        raise
     poll_task = asyncio.create_task(_alert_poll_loop())
     email_alert_task = asyncio.create_task(_email_alert_watch_loop())
     yield
