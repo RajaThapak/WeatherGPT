@@ -9,6 +9,7 @@ from pydantic import BaseModel
 
 from app.config import settings
 from app.services.geocoding import geocode
+from app.services.historical import HistoricalWindow, get_historical_window, last_year_window
 from app.services.llm import ActionResult, detect_action, extract_place, stream_chat_answer
 from app.services.weather import WeatherResponse, get_weather
 
@@ -83,6 +84,33 @@ def _system_prompt(weather: Optional[WeatherResponse], location_name: str, role:
     )
 
 
+def _year_over_year_system_prompt(
+    weather: Optional[WeatherResponse],
+    historical: Optional[HistoricalWindow],
+    location_name: str,
+    role: Optional[str] = None,
+) -> str:
+    if weather is None or historical is None:
+        return (
+            "You are WeatherGPT, a helpful weather assistant. The user wants a year-over-year "
+            f"comparison for {location_name}, but real data for it is currently unavailable — "
+            f"clearly say so, do not invent numbers. {STYLE_RULES}{_role_context(role)}"
+        )
+    return (
+        "You are WeatherGPT, a helpful weather assistant. The user wants to know how current "
+        f"conditions compare to the same time last year in {location_name}. Answer using ONLY "
+        f"the real data below — never invent numbers. {STYLE_RULES}\n\n"
+        f"Current conditions: {weather.temp_c}°C (feels like {weather.apparent_temp_c}°C), "
+        f"wind {weather.wind_speed_kmh}km/h, humidity {weather.humidity_pct}%, condition: {weather.kind}.\n"
+        f"Same period last year ({historical.start_date} to {historical.end_date}, "
+        f"{len(historical.days)} days): average high {historical.avg_temp_max_c}°C, "
+        f"average low {historical.avg_temp_min_c}°C, total rainfall {historical.total_precipitation_mm}mm "
+        "across that window.\n"
+        "Source: Open-Meteo historical archive, real recorded data, not a model prediction."
+        f"{_role_context(role)}"
+    )
+
+
 def _comparison_system_prompt(
     resolved: list[tuple[LocationIn, Optional[WeatherResponse]]], role: Optional[str] = None
 ) -> str:
@@ -141,6 +169,19 @@ async def chat_stream(body: ChatRequest) -> AsyncIterable[ServerSentEvent]:
             "handling this message — briefly confirm that naturally in your reply, in one short sentence."
         )
 
+    # A *suggestion* chip under the reply — never fires anything by itself
+    # (the frontend still checks it's still relevant, e.g. not already
+    # subscribed, before rendering it, and it only acts on a real click).
+    # Skipped when the same thing was just actually performed via `action`
+    # above, so the reply never both confirms an action AND then suggests
+    # the identical thing again.
+    if action and action.suggested_chip != "none":
+        already_done = (action.suggested_chip == "enable_alerts" and action.action == "subscribe_alerts") or (
+            action.suggested_chip == "set_role" and action.action == "set_role"
+        )
+        if not already_done:
+            yield ServerSentEvent(event="suggestion", data={"type": action.suggested_chip})
+
     resolved_locations: list[LocationIn] = []
     if extracted and extracted.has_explicit_place and extracted.place_queries:
         for query in extracted.place_queries:
@@ -190,6 +231,15 @@ async def chat_stream(body: ChatRequest) -> AsyncIterable[ServerSentEvent]:
 
     if is_comparison:
         system_prompt = _comparison_system_prompt(resolved, body.role)
+    elif resolved and extracted and extracted.compare_to_last_year:
+        loc, weather = resolved[0]
+        historical = None
+        try:
+            start, end = last_year_window()
+            historical = await get_historical_window(loc.lat, loc.lon, start, end)
+        except Exception as exc:
+            logger.warning("Historical fetch failed for %s: %s", loc.name, exc)
+        system_prompt = _year_over_year_system_prompt(weather, historical, loc.name, body.role)
     else:
         location_name = resolved[0][0].name if resolved else "the user's area"
         weather = resolved[0][1] if resolved else None

@@ -9,11 +9,16 @@ export type ChatLocationEvent = { lat: number; lon: number; name: string; source
 export type ChatActionEvent =
   | { type: "subscribe_alerts" }
   | { type: "set_role"; role: string };
+// A hint to render a clickable chip under the reply — never performs
+// anything by itself, unlike ChatActionEvent above (see chat-context.tsx
+// and ChatPanel.tsx for how a click on one of these actually does something).
+export type ChatSuggestionEvent = { type: "enable_alerts" | "set_role" };
 
 type Callbacks = {
   onLocation?: (loc: ChatLocationEvent) => void;
   onWeather?: (weather: WeatherResponse) => void;
   onAction?: (action: ChatActionEvent) => void;
+  onSuggestion?: (suggestion: ChatSuggestionEvent) => void;
   onToken?: (text: string) => void;
   onDone?: () => void;
   onError?: (message: string) => void;
@@ -92,6 +97,9 @@ function dispatch(rawEvent: string, callbacks: Callbacks) {
       break;
     case "action":
       callbacks.onAction?.(data as ChatActionEvent);
+      break;
+    case "suggestion":
+      callbacks.onSuggestion?.(data as ChatSuggestionEvent);
       break;
     case "token":
       callbacks.onToken?.((data as { text: string }).text);

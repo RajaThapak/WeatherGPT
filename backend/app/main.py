@@ -9,8 +9,9 @@ from app.cache import get_redis
 from app.config import settings
 from app.db import get_pool
 from app.http_client import close_http_client
-from app.routers import air_quality, alerts, chat, voice, weather
-from app.services.alerts import dispatch_new_alerts, fetch_and_ingest_alerts
+from app.routers import air_quality, alerts, auth, chat, voice, weather
+from app.services.alerts import dispatch_email_alerts, dispatch_new_alerts, fetch_and_ingest_alerts
+from app.services.email_alerts import check_weather_changes
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("weathergpt")
@@ -21,18 +22,34 @@ async def _alert_poll_loop() -> None:
         try:
             ingested = await fetch_and_ingest_alerts()
             sent = await dispatch_new_alerts()
-            if ingested or sent:
-                logger.info("Alert poll: ingested=%d, pushes sent=%d", ingested, sent)
+            emailed = await dispatch_email_alerts()
+            if ingested or sent or emailed:
+                logger.info(
+                    "Alert poll: ingested=%d, pushes sent=%d, emails sent=%d", ingested, sent, emailed
+                )
         except Exception as exc:
             logger.warning("Alert poll cycle failed: %s", exc)
         await asyncio.sleep(settings.alert_poll_interval_seconds)
 
 
+async def _email_alert_watch_loop() -> None:
+    while True:
+        try:
+            sent = await check_weather_changes()
+            if sent:
+                logger.info("Email alert watch: %d email(s) sent", sent)
+        except Exception as exc:
+            logger.warning("Email alert watch cycle failed: %s", exc)
+        await asyncio.sleep(settings.weather_alert_watch_interval_seconds)
+
+
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     poll_task = asyncio.create_task(_alert_poll_loop())
+    email_alert_task = asyncio.create_task(_email_alert_watch_loop())
     yield
     poll_task.cancel()
+    email_alert_task.cancel()
     await close_http_client()
 
 
@@ -41,6 +58,7 @@ app = FastAPI(title="WeatherGPT API", version="0.1.0", lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[o.strip() for o in settings.cors_origins.split(",")],
+    allow_credentials=True,  # the session cookie needs this to cross the frontend's origin
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -50,6 +68,7 @@ app.include_router(chat.router)
 app.include_router(air_quality.router)
 app.include_router(voice.router)
 app.include_router(alerts.router)
+app.include_router(auth.router)
 
 
 @app.get("/")

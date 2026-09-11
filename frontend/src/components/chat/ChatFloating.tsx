@@ -2,9 +2,13 @@
 
 import { useState } from "react";
 import Image from "next/image";
+import { useRouter } from "next/navigation";
 import { ChatPanel } from "./ChatPanel";
 import { ChatMascotPerch } from "./ChatMascotPerch";
 import { useChat } from "@/lib/chat-context";
+import { useAlerts } from "@/lib/alerts-context";
+import { useRole } from "@/lib/role-context";
+import { useAuth } from "@/lib/auth-context";
 import { useMediaQuery, DOCKED_QUERY } from "@/lib/use-media-query";
 
 // The desktop counterpart to ChatInline: a floating mascot button, fixed
@@ -12,9 +16,13 @@ import { useMediaQuery, DOCKED_QUERY } from "@/lib/use-media-query";
 // overlay near it — same click-to-open pattern the app originally had,
 // just with the mascot as the trigger instead of a plain pill button.
 export function ChatFloating() {
+  const router = useRouter();
   const isDocked = useMediaQuery(DOCKED_QUERY);
   const [open, setOpen] = useState(false);
   const chat = useChat();
+  const { subscribed, subscribe } = useAlerts();
+  const { role } = useRole();
+  const { user } = useAuth();
 
   if (!isDocked) return null;
 
@@ -25,7 +33,7 @@ export function ChatFloating() {
       {!open && (
         <button
           type="button"
-          onClick={() => setOpen(true)}
+          onClick={() => (user ? setOpen(true) : router.push("/login"))}
           aria-label="Open WeatherGPT chat"
           className="group fixed bottom-6 right-6 z-40 flex h-28 w-28 items-center justify-center transition-transform duration-[120ms] active:scale-[0.95]"
         >
@@ -62,6 +70,9 @@ export function ChatFloating() {
             onMessagePlayed={chat.markPlayed}
             muted={chat.muted}
             onToggleMute={chat.toggleMute}
+            subscribed={subscribed}
+            role={role}
+            onEnableAlerts={() => subscribe().catch(() => {})}
           />
         </div>
       )}

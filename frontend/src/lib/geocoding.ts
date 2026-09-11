@@ -22,3 +22,20 @@ export async function searchPlaces(query: string): Promise<GeocodeResult[]> {
     lat: f.center[1],
   }));
 }
+
+// Same MapTiler endpoint, coordinates instead of a text query — turns a
+// raw lat/lon (e.g. from the browser's Geolocation API) into a real place
+// name, the same way a forward search result already looks.
+export async function reverseGeocode(lat: number, lon: number): Promise<GeocodeResult | null> {
+  if (!MAPTILER_KEY) return null;
+
+  const url = `https://api.maptiler.com/geocoding/${lon},${lat}.json?key=${MAPTILER_KEY}&limit=1&language=en`;
+  const res = await fetch(url);
+  if (!res.ok) return null;
+
+  const data = await res.json();
+  const feature: MapTilerFeature | undefined = (data.features ?? [])[0];
+  if (!feature) return null;
+
+  return { name: feature.place_name, lon: feature.center[0], lat: feature.center[1] };
+}

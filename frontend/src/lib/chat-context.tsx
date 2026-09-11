@@ -163,6 +163,11 @@ export function ChatProvider({ children }: { children: ReactNode }) {
             setRole(action.role);
           }
         },
+        onSuggestion: (suggestion) => {
+          setMessages((prev) =>
+            prev.map((m) => (m.id === assistantId ? { ...m, suggestion: suggestion.type } : m)),
+          );
+        },
         onToken: (delta) => {
           setMessages((prev) =>
             prev.map((m) => (m.id === assistantId ? { ...m, content: m.content + delta } : m)),

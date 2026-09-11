@@ -7,7 +7,16 @@ import { useVoiceRecorder } from "@/lib/use-voice-recorder";
 import { transcribeAudio, synthesizeSpeech } from "@/lib/voice-api";
 import { formatRelativeTime, type ChatSession } from "@/lib/chat-storage";
 
-export type DisplayMessage = ChatMessage & { id: string; autoPlay?: boolean };
+export type DisplayMessage = ChatMessage & {
+  id: string;
+  autoPlay?: boolean;
+  // What kind of chip, if any, was suggested for this specific reply — a
+  // fact frozen at generation time about whether the topic warranted one.
+  // Whether it's actually *shown* is decided at render time against live
+  // subscribed/role state (see below), so an old message's chip correctly
+  // disappears once that action's already been taken by any means.
+  suggestion?: "enable_alerts" | "set_role";
+};
 
 export function ChatPanel({
   messages,
@@ -22,6 +31,9 @@ export function ChatPanel({
   onMessagePlayed,
   muted,
   onToggleMute,
+  subscribed,
+  role,
+  onEnableAlerts,
   variant = "overlay",
 }: {
   messages: DisplayMessage[];
@@ -43,6 +55,12 @@ export function ChatPanel({
   // automatic behavior mute is meant to silence.
   muted: boolean;
   onToggleMute: () => void;
+  // Live state used to decide whether a message's suggestion chip should
+  // still render (e.g. hide "Enable alerts" once already subscribed, by
+  // any means — not just by clicking the chip itself).
+  subscribed: boolean;
+  role: string | null;
+  onEnableAlerts: () => void;
   // "overlay": full-screen floating panel with a "Close" button — used on
   // tablet/desktop widths below the docked breakpoint, or wherever a
   // takeover panel is still wanted. "docked": fills its parent exactly, no
@@ -59,6 +77,7 @@ export function ChatPanel({
   const [voiceError, setVoiceError] = useState<string | null>(null);
   const [historyOpen, setHistoryOpen] = useState(false);
   const listRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const recorder = useVoiceRecorder();
 
@@ -250,28 +269,52 @@ export function ChatPanel({
                 tapping the mic.
               </p>
             )}
-            {messages.map((m) => (
-              <div key={m.id} className={`flex ${m.role === "user" ? "justify-end" : "justify-start"}`}>
-                <div
-                  className={`flex max-w-[85%] items-end gap-1.5 rounded-lg px-3 py-2 text-sm leading-relaxed ${
-                    m.role === "user" ? "bg-accent-primary text-text-inverse" : "bg-surface-2 text-text-primary"
-                  }`}
-                >
-                  <span>{m.content || (isStreaming ? "…" : "")}</span>
-                  {m.role === "assistant" && m.content && (
+            {messages.map((m) => {
+              // Frozen at generation time (was this topic chip-worthy?) but
+              // only actually shown if still live-relevant — an old
+              // "enable alerts" chip disappears once you're subscribed by
+              // any means, not just by clicking this exact chip.
+              const showEnableAlerts = m.suggestion === "enable_alerts" && !subscribed;
+              const showSetRole = m.suggestion === "set_role" && !role;
+              return (
+                <div key={m.id} className={`flex flex-col gap-1.5 ${m.role === "user" ? "items-end" : "items-start"}`}>
+                  <div
+                    className={`flex max-w-[85%] items-end gap-1.5 rounded-lg px-3 py-2 text-sm leading-relaxed ${
+                      m.role === "user" ? "bg-accent-primary text-text-inverse" : "bg-surface-2 text-text-primary"
+                    }`}
+                  >
+                    <span>{m.content || (isStreaming ? "…" : "")}</span>
+                    {m.role === "assistant" && m.content && (
+                      <button
+                        type="button"
+                        onClick={() => playMessage(m.id, m.content)}
+                        disabled={playingId !== null}
+                        aria-label="Play answer"
+                        className="shrink-0 text-text-tertiary transition-colors duration-[120ms] hover:text-text-primary disabled:opacity-40"
+                      >
+                        {playingId === m.id ? <Loader2 size={13} className="animate-spin" /> : <Volume2 size={13} />}
+                      </button>
+                    )}
+                  </div>
+                  {(showEnableAlerts || showSetRole) && (
                     <button
                       type="button"
-                      onClick={() => playMessage(m.id, m.content)}
-                      disabled={playingId !== null}
-                      aria-label="Play answer"
-                      className="shrink-0 text-text-tertiary transition-colors duration-[120ms] hover:text-text-primary disabled:opacity-40"
+                      onClick={() => {
+                        if (showEnableAlerts) {
+                          onEnableAlerts();
+                        } else {
+                          setDraft("I'm a ");
+                          inputRef.current?.focus();
+                        }
+                      }}
+                      className="rounded-full bg-accent-primary/15 px-3 py-1.5 text-xs font-medium text-accent-primary transition-colors duration-[120ms] hover:bg-accent-primary/25"
                     >
-                      {playingId === m.id ? <Loader2 size={13} className="animate-spin" /> : <Volume2 size={13} />}
+                      {showEnableAlerts ? "Enable alerts for this" : "Tell me your role"}
                     </button>
                   )}
                 </div>
-              </div>
-            ))}
+              );
+            })}
             {error && <div className="rounded-lg bg-alert/15 px-3 py-2 text-xs text-alert">{error}</div>}
             {voiceError && <div className="rounded-lg bg-alert/15 px-3 py-2 text-xs text-alert">{voiceError}</div>}
           </div>
@@ -294,6 +337,7 @@ export function ChatPanel({
               {recorder.isRecording ? <Square size={14} /> : <Mic size={16} strokeWidth={1.75} />}
             </button>
             <input
+              ref={inputRef}
               value={draft}
               onChange={(e) => setDraft(e.target.value)}
               onKeyDown={(e) => e.key === "Enter" && submit()}

@@ -9,6 +9,7 @@ from pywebpush import WebPushException, webpush
 from app.config import settings
 from app.db import get_pool
 from app.http_client import get_http_client
+from app.services.email_alerts import send_email_alert
 
 logger = logging.getLogger("weathergpt.alerts")
 
@@ -296,6 +297,74 @@ async def dispatch_new_alerts() -> int:
                 "INSERT INTO alert_notifications (subscription_id, alert_id) VALUES ($1, $2) "
                 "ON CONFLICT DO NOTHING",
                 row["subscription_id"],
+                row["alert_id"],
+            )
+
+    return sent
+
+
+def _severe_alert_email(
+    event: str, headline: str, description: str | None, instruction: str | None,
+    severity: str, area_desc: str
+) -> tuple[str, str]:
+    lines = [headline, ""]
+    if description:
+        lines.append(description)
+        lines.append("")
+    if instruction:
+        lines.append(f"Instructions: {instruction}")
+        lines.append("")
+    lines.append(f"Area: {area_desc}")
+    lines.append("Source: India Meteorological Department (IMD)")
+    lines.append("")
+    lines.append("— WeatherGPT")
+    subject = f"{severity} weather alert: {event}"
+    return subject, "\n".join(lines)
+
+
+async def dispatch_email_alerts() -> int:
+    """Finds (user, active severe alert) pairs not yet emailed and sends
+    one for each — the email counterpart to dispatch_new_alerts (push).
+    Targets users' last-known location (users.last_lat/last_lon), not
+    push_subscriptions, since this doesn't require browser push consent."""
+    pool = await get_pool(settings.database_url)
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(
+            """
+            SELECT u.id AS user_id, u.email,
+                   a.id AS alert_id, a.event, a.headline, a.description,
+                   a.instruction, a.severity, a.area_desc
+            FROM users u
+            JOIN weather_alerts a
+                ON ST_Contains(a.area, ST_SetSRID(ST_MakePoint(u.last_lon, u.last_lat), 4326))
+            WHERE u.email_alerts_enabled = true
+              AND u.email IS NOT NULL
+              AND u.last_lat IS NOT NULL
+              AND u.last_lon IS NOT NULL
+              AND a.expires > now()
+              AND NOT EXISTS (
+                  SELECT 1 FROM email_alert_notifications n
+                  WHERE n.user_id = u.id AND n.alert_id = a.id
+              )
+            """
+        )
+
+    sent = 0
+    for row in rows:
+        subject, body = _severe_alert_email(
+            row["event"], row["headline"], row["description"], row["instruction"],
+            row["severity"], row["area_desc"],
+        )
+        if not send_email_alert(row["email"], subject, body):
+            # Don't mark as notified — a delivery hiccup should still be
+            # retried on the next poll cycle, not silently skipped forever.
+            continue
+        sent += 1
+        async with pool.acquire() as conn:
+            await conn.execute(
+                "INSERT INTO email_alert_notifications (user_id, alert_id) VALUES ($1, $2) "
+                "ON CONFLICT DO NOTHING",
+                row["user_id"],
                 row["alert_id"],
             )
 

@@ -11,6 +11,8 @@ class Settings(BaseSettings):
     maptiler_api_key: str = ""
 
     weather_cache_ttl_seconds: int = 600
+    # Past data never changes, unlike live weather — cache aggressively.
+    historical_weather_cache_ttl_seconds: int = 30 * 24 * 3600
     geocode_cache_ttl_seconds: int = 86400
 
     groq_extract_model: str = "openai/gpt-oss-20b"
@@ -35,6 +37,28 @@ class Settings(BaseSettings):
     vapid_subject: str = "mailto:example@example.com"
     alert_poll_interval_seconds: int = 120
     cap_feed_url: str = "https://cap-sources.s3.amazonaws.com/in-imd-en/rss.xml"
+
+    # Auth — email/phone + password login, session carried in an httpOnly
+    # JWT cookie (not localStorage, so a client-side XSS can't read the token).
+    jwt_secret: str = ""
+    jwt_algorithm: str = "HS256"
+    jwt_expires_minutes: int = 60 * 24 * 7
+
+    # Proactive weather alerts — morning/evening digests plus a sudden-change
+    # watcher, delivered by email over Gmail SMTP. Blank username/password
+    # means the feature is a no-op (logs and skips sending) rather than
+    # failing, same as the other optional API keys above.
+    smtp_host: str = "smtp.gmail.com"
+    smtp_port: int = 587
+    smtp_username: str = ""
+    smtp_password: str = ""
+    smtp_from_name: str = "WeatherGPT"
+    weather_alert_watch_interval_seconds: int = 600
+    weather_alert_rain_probability_threshold: int = 60
+    weather_alert_change_threshold_pct: int = 30
+    weather_alert_morning_hour_ist: int = 7
+    weather_alert_evening_hour_ist: int = 18
+    weather_alert_night_hour_ist: int = 21
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 

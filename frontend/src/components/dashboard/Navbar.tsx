@@ -1,12 +1,14 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { Menu, Bell, MapPin, Search, Sun, Moon, History, ChevronRight, ArrowLeft, AlertTriangle, UserCircle, HeartPulse } from "lucide-react";
+import { useRouter } from "next/navigation";
+import { Menu, Bell, MapPin, Search, Sun, Moon, History, ChevronRight, ArrowLeft, AlertTriangle, UserCircle, HeartPulse, LogOut, Mail } from "lucide-react";
 import { useLocation } from "@/lib/location-context";
 import { useTheme } from "@/lib/theme-context";
 import { useSearch } from "@/lib/search-context";
 import { useAlerts } from "@/lib/alerts-context";
 import { useRole } from "@/lib/role-context";
+import { useAuth } from "@/lib/auth-context";
 import { useHealthRisks } from "@/lib/use-health-risks";
 import { formatRelativeTime } from "@/lib/chat-storage";
 import type { GeocodeResult } from "@/lib/geocoding";
@@ -47,11 +49,13 @@ function IconButton({
 }
 
 export function Navbar() {
+  const router = useRouter();
   const { theme, setTheme } = useTheme();
   const { location, setLocation } = useLocation();
   const { query, setQuery, results, searching, clear, history, addToHistory } = useSearch();
   const { subscribed, activeAlerts, permissionDenied, subscribe, unsubscribe } = useAlerts();
   const { role, setRole } = useRole();
+  const { user, hasLoaded, logout, setEmailAlerts } = useAuth();
   const healthRisks = useHealthRisks();
 
   const [menuOpen, setMenuOpen] = useState(false);
@@ -64,6 +68,11 @@ export function Navbar() {
   const [subscribing, setSubscribing] = useState(false);
   const [subscribeError, setSubscribeError] = useState<string | null>(null);
   const notifRef = useRef<HTMLDivElement>(null);
+
+  const [accountOpen, setAccountOpen] = useState(false);
+  const accountRef = useRef<HTMLDivElement>(null);
+  const [emailAlertsToggling, setEmailAlertsToggling] = useState(false);
+  const [emailAlertsError, setEmailAlertsError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!menuOpen) return;
@@ -88,6 +97,32 @@ export function Navbar() {
     document.addEventListener("mousedown", onClickOutside);
     return () => document.removeEventListener("mousedown", onClickOutside);
   }, [notifOpen]);
+
+  useEffect(() => {
+    if (!accountOpen) return;
+    const onClickOutside = (e: MouseEvent) => {
+      if (accountRef.current && !accountRef.current.contains(e.target as Node)) {
+        setAccountOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", onClickOutside);
+    return () => document.removeEventListener("mousedown", onClickOutside);
+  }, [accountOpen]);
+
+  const accountInitial = (user?.name || user?.email || user?.phone || "?").trim().charAt(0).toUpperCase();
+
+  const toggleEmailAlerts = async () => {
+    if (!user) return;
+    setEmailAlertsToggling(true);
+    setEmailAlertsError(null);
+    try {
+      await setEmailAlerts(!user.email_alerts_enabled);
+    } catch (err) {
+      setEmailAlertsError(err instanceof Error ? err.message : "Couldn't update this");
+    } finally {
+      setEmailAlertsToggling(false);
+    }
+  };
 
   const handleEnableAlerts = async () => {
     setSubscribing(true);
@@ -388,7 +423,74 @@ export function Navbar() {
         <IconButton ariaLabel="Dark mode" active={theme === "dark"} onClick={() => setTheme("dark")}>
           <Moon size={18} strokeWidth={1.5} />
         </IconButton>
-        <div className="ml-1 h-11 w-11 shrink-0 rounded-full bg-gradient-to-br from-accent-primary-soft to-accent-secondary" />
+        <div className="relative ml-1 shrink-0" ref={accountRef}>
+          <button
+            type="button"
+            onClick={() => (hasLoaded && user ? setAccountOpen((v) => !v) : router.push("/login"))}
+            aria-label={user ? "Account menu" : "Sign in"}
+            className="flex h-11 w-11 items-center justify-center rounded-full bg-gradient-to-br from-accent-primary-soft to-accent-secondary text-sm font-semibold text-text-inverse transition-opacity duration-[120ms] hover:opacity-90"
+          >
+            {user ? accountInitial : <UserCircle size={20} strokeWidth={1.5} />}
+          </button>
+
+          {accountOpen && user && (
+            <div className="absolute right-0 top-12 z-30 w-56 max-w-[calc(100vw-1rem)] overflow-hidden rounded-lg bg-surface-1 py-1 shadow-[0_12px_24px_rgba(0,0,0,0.30)]">
+              <div className="border-b border-border-subtle px-3 py-2.5">
+                <p className="truncate text-sm font-medium text-text-primary">{user.name || "WeatherGPT user"}</p>
+                <p className="truncate text-xs text-text-tertiary">{user.email || user.phone}</p>
+              </div>
+
+              <div className="border-b border-border-subtle px-3 py-2.5">
+                {user.email ? (
+                  <>
+                    <button
+                      type="button"
+                      onClick={toggleEmailAlerts}
+                      disabled={emailAlertsToggling}
+                      className="flex w-full items-center justify-between gap-2 disabled:opacity-50"
+                    >
+                      <span className="flex items-center gap-2 text-sm text-text-primary">
+                        <Mail size={16} strokeWidth={1.5} className="text-text-secondary" />
+                        Email weather alerts
+                      </span>
+                      <span
+                        className={`flex h-5 w-9 shrink-0 items-center rounded-full p-0.5 transition-colors duration-[120ms] ${
+                          user.email_alerts_enabled ? "bg-accent-primary" : "bg-surface-2"
+                        }`}
+                      >
+                        <span
+                          className={`h-4 w-4 rounded-full bg-text-inverse transition-transform duration-[120ms] ${
+                            user.email_alerts_enabled ? "translate-x-4" : "translate-x-0"
+                          }`}
+                        />
+                      </span>
+                    </button>
+                    <p className="mt-1 text-xs text-text-tertiary">
+                      Proactive rain updates for your current location, sent to {user.email}.
+                    </p>
+                    {emailAlertsError && <p className="mt-1 text-xs text-alert">{emailAlertsError}</p>}
+                  </>
+                ) : (
+                  <p className="text-xs text-text-tertiary">
+                    Add an email to your account to get weather alerts.
+                  </p>
+                )}
+              </div>
+
+              <button
+                type="button"
+                onClick={() => {
+                  logout();
+                  setAccountOpen(false);
+                }}
+                className="flex w-full items-center gap-2 px-3 py-2.5 text-left text-sm text-text-primary transition-colors duration-[120ms] hover:bg-surface-2"
+              >
+                <LogOut size={16} strokeWidth={1.5} className="text-text-secondary" />
+                Log out
+              </button>
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );

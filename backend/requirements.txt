@@ -10,3 +10,6 @@ groq==1.7.0
 openai==3.9.0
 python-multipart==0.0.32
 pywebpush==2.5.0
+bcrypt==4.2.1
+PyJWT==2.10.1
+tzdata==2026.3

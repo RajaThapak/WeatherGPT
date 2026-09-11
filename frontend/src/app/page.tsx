@@ -7,6 +7,7 @@ import { WeatherMetricsPanel } from "@/components/dashboard/WeatherMetricsPanel"
 import { AlertBanner } from "@/components/dashboard/AlertBanner";
 import { AlertTakeover } from "@/components/dashboard/AlertTakeover";
 import { PersonaAdvisoryCard } from "@/components/dashboard/PersonaAdvisoryCard";
+import { AccountLocationSync } from "@/components/dashboard/AccountLocationSync";
 import { ChatFloating } from "@/components/chat/ChatFloating";
 import { ChatInline } from "@/components/chat/ChatInline";
 import { RoleOnboarding } from "@/components/onboarding/RoleOnboarding";
@@ -29,6 +30,7 @@ export default function Home() {
               <ChatProvider>
                 <RoleOnboarding />
                 <AlertTakeover />
+                <AccountLocationSync />
                 <ChatFloating />
                 <main className="flex flex-1 justify-center bg-bg-app p-4 sm:p-8">
                   <div className="flex w-full max-w-[1200px] flex-col gap-6 rounded-xl bg-bg-shell p-3 sm:p-6">
