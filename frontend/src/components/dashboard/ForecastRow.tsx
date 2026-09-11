@@ -3,25 +3,24 @@
 import { HeroForecastCard } from "./HeroForecastCard";
 import { ForecastDayCard } from "./ForecastDayCard";
 import { HourlyTempGraph } from "./HourlyTempGraph";
-import { weekForecast as mockWeek } from "@/lib/mockData";
 import { useLocation } from "@/lib/location-context";
 import { useView } from "@/lib/view-context";
 import { toHeroForecast, toTomorrowHero, toWeekForecast, toTodayHourly, toTomorrowHourly } from "@/lib/weather-api";
 import { formatRelativeTime } from "@/lib/chat-storage";
+import type { WeatherKind } from "@/lib/mockData";
 
 export function ForecastRow() {
   const { weather } = useLocation();
   const { activeTab } = useView();
 
   let heroData;
-  let strip: { day: string; tempC: number; kind: (typeof mockWeek)[number]["kind"] }[];
+  let strip: { day: string; tempC: number; kind: WeatherKind }[] = [];
   // True for the two hour-by-hour tabs (Today/Tomorrow) — the line graph
   // only makes sense for an hourly trend, not the 7-day daily strip.
   let isHourly = false;
 
   if (!weather) {
     heroData = undefined;
-    strip = mockWeek;
   } else if (activeTab === "Today") {
     heroData = toHeroForecast(weather);
     strip = toTodayHourly(weather);
@@ -50,9 +49,11 @@ export function ForecastRow() {
         <div className="flex h-full flex-[1.5] min-w-[220px]">
           <HeroForecastCard data={heroData} />
         </div>
-        {strip.map((day, i) => (
-          <ForecastDayCard key={`${day.day}-${i}`} {...day} />
-        ))}
+        {!weather
+          ? Array.from({ length: 6 }).map((_, i) => (
+              <div key={i} className="h-full min-w-[76px] flex-1 animate-pulse rounded-lg bg-surface-2" />
+            ))
+          : strip.map((day, i) => <ForecastDayCard key={`${day.day}-${i}`} {...day} />)}
       </div>
 
       {/* Mobile, hourly tabs only: hero card full-width, then the hourly

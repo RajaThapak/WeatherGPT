@@ -1,6 +1,5 @@
 "use client";
 
-import { rainChance as mockRain } from "@/lib/mockData";
 import { useLocation } from "@/lib/location-context";
 import { toRainChance } from "@/lib/weather-api";
 
@@ -8,7 +7,7 @@ const BANDS = ["Heavy", "Sunny", "Rainy"];
 
 export function RainChart() {
   const { weather } = useLocation();
-  const bars = weather ? toRainChance(weather) : mockRain;
+  const bars = weather ? toRainChance(weather) : null;
 
   return (
     <div className="flex h-[190px] flex-col rounded-lg bg-surface-1 p-5">
@@ -28,7 +27,16 @@ export function RainChart() {
             ))}
           </div>
 
-          {bars.map((bar, i) => (
+          {/* No real data yet — a pulsing skeleton, not an invented chart. */}
+          {!bars &&
+            Array.from({ length: 6 }).map((_, i) => (
+              <div key={i} className="flex h-full flex-1 flex-col items-center justify-end gap-2">
+                <div className="h-[35%] w-[55%] animate-pulse rounded-t-sm bg-surface-3" />
+                <div className="h-2.5 w-6 animate-pulse rounded bg-surface-3" />
+              </div>
+            ))}
+
+          {bars?.map((bar, i) => (
             <div key={`${bar.label}-${i}`} className="flex h-full flex-1 flex-col items-center justify-end gap-2">
               <div
                 className="w-[55%] rounded-t-sm bg-accent-primary"
