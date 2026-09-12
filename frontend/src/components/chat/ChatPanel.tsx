@@ -21,6 +21,20 @@ const LIVE_SENTENCE_RE = /(?:[^.!?]|\.(?=\d))+[.!?]+(?=\s)/g;
 // it's safe to close out a trailing sentence with no trailing whitespace.
 const FINAL_SENTENCE_RE = /(?:[^.!?]|\.(?=\d))+[.!?]+(?=\s|$)/g;
 
+// Three staggered bouncing dots — shown in place of a reply's text while
+// it's still being generated or is waiting for its voice to catch up to
+// it, so that wait reads as "thinking" rather than a static, possibly-stuck
+// looking "…".
+function ThinkingDots() {
+  return (
+    <span className="inline-flex items-center gap-1 py-0.5" aria-label="Thinking">
+      <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-text-tertiary [animation-delay:-0.3s]" />
+      <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-text-tertiary [animation-delay:-0.15s]" />
+      <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-text-tertiary" />
+    </span>
+  );
+}
+
 export type DisplayMessage = ChatMessage & {
   id: string;
   autoPlay?: boolean;
@@ -497,7 +511,7 @@ export function ChatPanel({
                       m.role === "user" ? "bg-accent-primary text-text-inverse" : "bg-surface-2 text-text-primary"
                     }`}
                   >
-                    <span>{displayText || (showPlaceholder ? "…" : "")}</span>
+                    {displayText ? <span>{displayText}</span> : showPlaceholder ? <ThinkingDots /> : null}
                     {m.role === "assistant" && m.content && (
                       <button
                         type="button"
