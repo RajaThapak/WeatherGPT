@@ -7,6 +7,20 @@ import { useVoiceRecorder } from "@/lib/use-voice-recorder";
 import { transcribeAudio, synthesizeSpeech } from "@/lib/voice-api";
 import { formatRelativeTime, type ChatSession } from "@/lib/chat-storage";
 
+// Recognizes a sentence while MORE text may still be on the way (the reply
+// is still streaming in). Requires the terminal punctuation be followed by
+// whitespace we've actually already received — treating "end of what's
+// arrived so far" as good enough would prematurely cut a still-arriving
+// decimal number (e.g. "...of 30." right before the "6°C" in the next
+// token chunk) into a false sentence break. One token late is fine; one
+// token early speaks the wrong thing.
+const LIVE_SENTENCE_RE = /(?:[^.!?]|\.(?=\d))+[.!?]+(?=\s)/g;
+// Recognizes a sentence once the full text is known for certain (the reply
+// finished streaming, or an already-complete message is being replayed via
+// the speaker button) — here "end of string" really does mean end, so
+// it's safe to close out a trailing sentence with no trailing whitespace.
+const FINAL_SENTENCE_RE = /(?:[^.!?]|\.(?=\d))+[.!?]+(?=\s|$)/g;
+
 export type DisplayMessage = ChatMessage & {
   id: string;
   autoPlay?: boolean;
@@ -75,15 +89,48 @@ export function ChatPanel({
   const [draft, setDraft] = useState("");
   const [playingId, setPlayingId] = useState<string | null>(null);
   const [voiceError, setVoiceError] = useState<string | null>(null);
+  // Text revealed so far, per message id, for messages whose voice is
+  // live-syncing to text (see liveGatedId below) — grows one sentence at a
+  // time, exactly when that sentence's audio starts playing, so the words
+  // on screen never get ahead of what's being spoken.
+  const [revealedText, setRevealedText] = useState<Record<string, string>>({});
+  // The message id (if any) currently being displayed via revealedText
+  // instead of its real streamed content — only set for a message going
+  // through the live auto-play path, never for a manual replay of an
+  // already-fully-shown message (replaying voice on old text shouldn't
+  // blank it out and re-reveal it).
+  const [liveGatedId, setLiveGatedId] = useState<string | null>(null);
   const [historyOpen, setHistoryOpen] = useState(false);
   const listRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
   // Aborts the whole sentence queue (not just the currently-playing clip) —
-  // set while a playMessage() call is in flight, cleared when it finishes
-  // or is stopped. Needed because pausing the <audio> element alone doesn't
-  // stop the queue from moving on to synthesize/play the next sentence.
+  // set while a playback loop is running, cleared when it finishes or is
+  // stopped. Needed because pausing the <audio> element alone doesn't stop
+  // the queue from moving on to synthesize/play the next sentence.
   const stopPlaybackRef = useRef<(() => void) | null>(null);
+  // The message id the live TTS pipeline is currently feeding/speaking, if
+  // any — distinguishes "still tracking this message, just feed it more
+  // text as tokens arrive" from "this is a new message, start fresh".
+  const activePlaybackIdRef = useRef<string | null>(null);
+  // How many characters of the active message's content have already been
+  // turned into queued sentences — lets feedLiveContent() look only at the
+  // newly-arrived suffix on each token update instead of re-scanning from
+  // the start every time.
+  const spokenUpToRef = useRef(0);
+  // Sentences already dispatched for synthesis, each carrying its own
+  // in-flight (or already-resolved) audio promise — kicked off the instant
+  // a sentence is recognized, not when its turn to play comes up, so
+  // network latency overlaps with whatever's currently playing/streaming.
+  const ttsQueueRef = useRef<{ text: string; promise: Promise<Blob> }[]>([]);
+  // True once we know no further sentences will be added for the active
+  // message (its stream finished, or it was a already-complete message
+  // replayed via the speaker button) — lets the player loop tell "queue is
+  // temporarily empty, more is coming" apart from "queue is empty, done".
+  const ttsClosedRef = useRef(true);
+  // Wakes the player loop when it's idle-waiting for either a new sentence
+  // or a stop signal.
+  const wakeRef = useRef<(() => void) | null>(null);
   const recorder = useVoiceRecorder();
 
   useEffect(() => {
@@ -113,50 +160,85 @@ export function ChatPanel({
     setDraft("");
   };
 
-  // Splits a reply into sentence-sized chunks so speech can start on the
-  // FIRST sentence almost immediately, instead of waiting for Sarvam to
-  // synthesize the entire reply before any audio plays — that full-message
-  // round trip was the source of the noticeable delay after longer replies.
-  // Falls back to the whole text as one "sentence" if no punctuation is found.
-  //
-  // The body group treats a "." as ordinary content (not a boundary) when
-  // it's immediately followed by a digit, e.g. "30.6°C" — otherwise a
-  // decimal point anywhere in the reply (temperatures, coordinates, etc.)
-  // made `[^.!?]+` stop dead there with no way to resume, since it excludes
-  // periods entirely; only text after the LAST decimal point in the whole
-  // message ever matched, so most replies got silently truncated to just
-  // their final clause before being spoken.
-  function splitIntoSentences(text: string): string[] {
-    const matches = text.match(/(?:[^.!?]|\.(?=\d))+[.!?]+(?=\s|$)/g);
-    if (!matches || matches.length === 0) return [text.trim()];
-    return matches.map((s) => s.trim()).filter(Boolean);
+  // Synthesizes a sentence immediately (not when its turn to play comes
+  // up) and pushes it onto the queue, waking the player loop if it was
+  // idle-waiting for more.
+  function enqueueSentence(text: string) {
+    const trimmed = text.trim();
+    if (!trimmed) return;
+    ttsQueueRef.current.push({ text: trimmed, promise: synthesizeSpeech(trimmed) });
+    wakeRef.current?.();
   }
 
-  const playMessage = async (id: string, text: string) => {
-    if (!text.trim() || playingId) return;
-    setPlayingId(id);
-    setVoiceError(null);
+  // Called on every token update for the message currently being spoken —
+  // scans only the newly-arrived suffix for complete sentences and queues
+  // any it finds. This is what lets speech start on the first sentence
+  // while the rest of the reply is still streaming in, instead of waiting
+  // for the whole message to finish first. Uses matchAll (not exec in a
+  // loop) so it never mutates the shared regex's own lastIndex.
+  function feedLiveContent(id: string, content: string) {
+    if (activePlaybackIdRef.current !== id) return;
+    const unspoken = content.slice(spokenUpToRef.current);
+    let consumed = 0;
+    for (const match of unspoken.matchAll(LIVE_SENTENCE_RE)) {
+      enqueueSentence(match[0]);
+      consumed = match.index + match[0].length;
+    }
+    spokenUpToRef.current += consumed;
+  }
 
+  // Called once the full text is known — flushes whatever's left
+  // (including a trailing fragment with no terminal punctuation at all)
+  // and marks the queue closed so the player loop knows to stop once it
+  // runs dry instead of waiting for more.
+  function closeLiveContent(id: string, finalContent: string) {
+    if (activePlaybackIdRef.current !== id) return;
+    const remainder = finalContent.slice(spokenUpToRef.current);
+    let any = false;
+    for (const match of remainder.matchAll(FINAL_SENTENCE_RE)) {
+      enqueueSentence(match[0]);
+      any = true;
+    }
+    if (!any && remainder.trim()) enqueueSentence(remainder);
+    spokenUpToRef.current = finalContent.length;
+    ttsClosedRef.current = true;
+    wakeRef.current?.();
+  }
+
+  // Consumes the queue in order, playing each sentence's audio as its
+  // promise resolves. Waits (rather than exiting) when the queue is
+  // temporarily empty but more sentences are still expected. When `live`
+  // is true, also reveals each sentence's text at the exact moment its
+  // audio starts — so words and voice move together instead of text
+  // racing ahead of speech.
+  async function runPlaybackLoop(id: string, live: boolean) {
     let stopped = false;
     stopPlaybackRef.current = () => {
       stopped = true;
       audioRef.current?.pause();
+      wakeRef.current?.();
     };
-
-    const sentences = splitIntoSentences(text);
+    setPlayingId(id);
+    setVoiceError(null);
     try {
-      // Kick off synthesis for the first sentence immediately; each
-      // subsequent sentence's synthesis is kicked off as soon as the
-      // previous one starts playing, so it's usually ready by the time
-      // its turn comes — audio keeps flowing without a per-sentence gap.
-      let nextBlob: Promise<Blob> | null = synthesizeSpeech(sentences[0]);
-      for (let i = 0; i < sentences.length && !stopped; i++) {
-        // Non-null: only ever null past the last iteration, which the loop
-        // condition above already prevents us from reaching.
-        const blob = await nextBlob!;
+      while (!stopped) {
+        const next = ttsQueueRef.current.shift();
+        if (!next) {
+          if (ttsClosedRef.current) break;
+          await new Promise<void>((resolve) => {
+            wakeRef.current = resolve;
+          });
+          wakeRef.current = null;
+          continue;
+        }
+        const blob = await next.promise;
         if (stopped) break;
-        nextBlob = i + 1 < sentences.length ? synthesizeSpeech(sentences[i + 1]) : null;
-
+        if (live) {
+          setRevealedText((prev) => ({
+            ...prev,
+            [id]: prev[id] ? `${prev[id]} ${next.text}` : next.text,
+          }));
+        }
         const url = URL.createObjectURL(blob);
         const audio = new Audio(url);
         audioRef.current = audio;
@@ -176,20 +258,69 @@ export function ChatPanel({
       setVoiceError(err instanceof Error ? err.message : "Couldn't play audio");
     } finally {
       stopPlaybackRef.current = null;
+      activePlaybackIdRef.current = null;
       setPlayingId(null);
+      // Falls back to showing the real (complete) content instead of the
+      // reconstructed reveal text — matters most if we stopped early or
+      // errored partway through, so the user never gets stuck looking at
+      // a permanently truncated reply.
+      if (live) setLiveGatedId((prev) => (prev === id ? null : prev));
     }
+  }
+
+  // Manual replay (the per-message speaker button) — the full text is
+  // already known and already fully visible, so this never gates display:
+  // seed the queue with all of it at once via the same "final" path a live
+  // message uses once its stream ends, but purely for audio.
+  const playMessage = (id: string, text: string) => {
+    if (!text.trim() || playingId) return;
+    activePlaybackIdRef.current = id;
+    spokenUpToRef.current = 0;
+    ttsQueueRef.current = [];
+    ttsClosedRef.current = false;
+    runPlaybackLoop(id, false);
+    closeLiveContent(id, text);
   };
 
   // Auto-play every assistant answer exactly once, whether the question was
   // typed or spoken — unless muted, in which case still mark it played (so
-  // unmuting later doesn't cause a burst of replies from earlier).
+  // unmuting later doesn't cause a burst of replies from earlier). Starts
+  // feeding the live pipeline as soon as the reply begins streaming, rather
+  // than waiting for it to finish, so speech starts on the first sentence
+  // while later sentences are still arriving.
   useEffect(() => {
-    if (isStreaming) return;
     const last = messages[messages.length - 1];
-    if (last?.role === "assistant" && last.autoPlay && last.content.trim()) {
-      onMessagePlayed?.(last.id);
-      if (!muted) playMessage(last.id, last.content);
+    if (!last || last.role !== "assistant") return;
+
+    if (activePlaybackIdRef.current === last.id) {
+      // Already tracking this message — keep feeding it regardless of
+      // autoPlay's own value below. We flip that flag off ourselves the
+      // moment we start (so a later rerender/reopen doesn't re-trigger),
+      // but that must not also stop US from continuing to feed the very
+      // message we're already speaking — otherwise everything after the
+      // first token update for a message would silently go unspoken.
+      if (isStreaming) {
+        feedLiveContent(last.id, last.content);
+      } else {
+        closeLiveContent(last.id, last.content);
+      }
+      return;
     }
+
+    if (!last.autoPlay || playingId || muted) return;
+    // A brand-new assistant message just appeared — start tracking it
+    // immediately (even before it has any content yet) so the very first
+    // sentence gets queued the moment it completes.
+    onMessagePlayed?.(last.id);
+    activePlaybackIdRef.current = last.id;
+    spokenUpToRef.current = 0;
+    ttsQueueRef.current = [];
+    ttsClosedRef.current = false;
+    setRevealedText((prev) => ({ ...prev, [last.id]: "" }));
+    setLiveGatedId(last.id);
+    runPlaybackLoop(last.id, true);
+    feedLiveContent(last.id, last.content);
+    if (!isStreaming) closeLiveContent(last.id, last.content);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [messages, isStreaming, muted]);
 
@@ -328,6 +459,13 @@ export function ChatPanel({
               // any means, not just by clicking this exact chip.
               const showEnableAlerts = m.suggestion === "enable_alerts" && !subscribed;
               const showSetRole = m.suggestion === "set_role" && !role;
+              // Text and voice stay in lockstep for a live-playing reply —
+              // show only what's been spoken so far (or queued to speak
+              // immediately) rather than the full streamed content, so
+              // words never appear ahead of the voice reading them.
+              const isLiveGated = liveGatedId === m.id;
+              const displayText = isLiveGated ? (revealedText[m.id] ?? "") : m.content;
+              const showPlaceholder = !displayText && (isStreaming || isLiveGated);
               return (
                 <div key={m.id} className={`flex flex-col gap-1.5 ${m.role === "user" ? "items-end" : "items-start"}`}>
                   <div
@@ -335,7 +473,7 @@ export function ChatPanel({
                       m.role === "user" ? "bg-accent-primary text-text-inverse" : "bg-surface-2 text-text-primary"
                     }`}
                   >
-                    <span>{m.content || (isStreaming ? "…" : "")}</span>
+                    <span>{displayText || (showPlaceholder ? "…" : "")}</span>
                     {m.role === "assistant" && m.content && (
                       <button
                         type="button"
