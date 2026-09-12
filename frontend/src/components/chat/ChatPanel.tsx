@@ -307,7 +307,17 @@ export function ChatPanel({
       return;
     }
 
-    if (!last.autoPlay || playingId || muted) return;
+    if (!last.autoPlay || muted) return;
+    if (playingId) {
+      // Something else is still speaking — this message waits its turn.
+      // `playingId` is a dependency below specifically so this effect
+      // re-runs the moment that finishes (it clears to null), instead of
+      // this message being silently skipped forever; until then it stays
+      // gated (see isPendingVoice in the render below) rather than
+      // flashing its full text in while a different reply is still
+      // being read aloud.
+      return;
+    }
     // A brand-new assistant message just appeared — start tracking it
     // immediately (even before it has any content yet) so the very first
     // sentence gets queued the moment it completes.
@@ -322,7 +332,7 @@ export function ChatPanel({
     feedLiveContent(last.id, last.content);
     if (!isStreaming) closeLiveContent(last.id, last.content);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [messages, isStreaming, muted]);
+  }, [messages, isStreaming, muted, playingId]);
 
   const toggleMic = async () => {
     if (recorder.isRecording) {
@@ -452,7 +462,8 @@ export function ChatPanel({
                 tapping the mic.
               </p>
             )}
-            {messages.map((m) => {
+            {messages.map((m, i) => {
+              const isLastMessage = i === messages.length - 1;
               // Frozen at generation time (was this topic chip-worthy?) but
               // only actually shown if still live-relevant — an old
               // "enable alerts" chip disappears once you're subscribed by
@@ -462,10 +473,23 @@ export function ChatPanel({
               // Text and voice stay in lockstep for a live-playing reply —
               // show only what's been spoken so far (or queued to speak
               // immediately) rather than the full streamed content, so
-              // words never appear ahead of the voice reading them.
+              // words never appear ahead of the voice reading them. A
+              // message still waiting its turn (autoPlay still true, but
+              // something else is currently speaking) stays gated too —
+              // otherwise its full text would flash in immediately while
+              // an earlier reply is still being read aloud, then voice
+              // would only catch up once its own turn finally starts.
+              // Restricted to the LAST message only: the auto-play effect
+              // only ever picks up messages[length-1], so an older message
+              // that got superseded before its turn came up would
+              // otherwise stay gated (blank) forever with no way to ever
+              // reveal it.
               const isLiveGated = liveGatedId === m.id;
-              const displayText = isLiveGated ? (revealedText[m.id] ?? "") : m.content;
-              const showPlaceholder = !displayText && (isStreaming || isLiveGated);
+              const isPendingVoice =
+                isLastMessage && m.role === "assistant" && m.autoPlay === true && !muted && !isLiveGated;
+              const gated = isLiveGated || isPendingVoice;
+              const displayText = gated ? (revealedText[m.id] ?? "") : m.content;
+              const showPlaceholder = !displayText && (isStreaming || gated);
               return (
                 <div key={m.id} className={`flex flex-col gap-1.5 ${m.role === "user" ? "items-end" : "items-start"}`}>
                   <div
