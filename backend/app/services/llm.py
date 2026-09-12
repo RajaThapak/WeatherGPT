@@ -33,6 +33,14 @@ class ExtractResult(BaseModel):
     # last year", "is this normal for this time of year") — triggers a
     # real historical-data fetch (see historical.py), never an LLM guess.
     compare_to_last_year: bool = False
+    # True when the message asks to compare a named place against the
+    # user's own current location, referred to deictically rather than by
+    # name (e.g. "compare this location and Haryana", "is it hotter here
+    # than in Delhi"). Without this, a message naming exactly one place
+    # ("Haryana") resolves to just that one place — never triggering
+    # comparison mode — leaving the model with only one side of the
+    # comparison and no way to honestly do what was asked.
+    compare_to_current_location: bool = False
 
 
 EXTRACT_SCHEMA = {
@@ -47,9 +55,11 @@ EXTRACT_SCHEMA = {
                 "has_explicit_place": {"type": "boolean"},
                 "place_queries": {"type": "array", "items": {"type": "string"}},
                 "compare_to_last_year": {"type": "boolean"},
+                "compare_to_current_location": {"type": "boolean"},
             },
             "required": [
-                "is_weather_question", "has_explicit_place", "place_queries", "compare_to_last_year"
+                "is_weather_question", "has_explicit_place", "place_queries", "compare_to_last_year",
+                "compare_to_current_location",
             ],
             "additionalProperties": False,
         },
@@ -76,7 +86,12 @@ async def extract_place(message: str) -> ExtractResult:
                     "conditions are \"normal\" for this time of year (e.g. \"how does this compare "
                     "to last year\", \"is this unusual for September\", \"was it this hot last year "
                     "too\"). This is about comparing to the PAST, not just asking for today's "
-                    "weather or a multi-day forecast — those are false."
+                    "weather or a multi-day forecast — those are false.\n\n"
+                    "Also set compare_to_current_location to true if the message asks to compare a "
+                    "named place against the user's OWN current location, referred to deictically "
+                    "rather than by name — e.g. \"compare this location and Haryana\", \"is it hotter "
+                    "here than in Delhi\", \"how does my location compare to Mumbai\". False for a "
+                    "plain question about a single named place with no such comparison."
                 ),
             },
             {"role": "user", "content": message},

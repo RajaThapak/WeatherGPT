@@ -200,7 +200,19 @@ async def chat_stream(body: ChatRequest) -> AsyncIterable[ServerSentEvent]:
 
     source = "extracted"
 
-    if not resolved_locations and len(body.compared_locations) > 1:
+    if (
+        extracted
+        and extracted.compare_to_current_location
+        and len(resolved_locations) == 1
+        and body.location is not None
+    ):
+        # The message named exactly one place but asked to compare it
+        # against the user's own current location ("compare this location
+        # and Haryana") — without this, only the named place resolves,
+        # comparison mode never triggers, and the model has no data for
+        # "here" to honestly compare against (so it just declines).
+        resolved_locations.append(body.location)
+    elif not resolved_locations and len(body.compared_locations) > 1:
         # The current message didn't name a place itself (e.g. a bare
         # follow-up like "tell me again"), but the previous reply compared
         # multiple cities — keep comparing those same cities rather than
