@@ -167,6 +167,23 @@ export function ChatPanel({
     }
   }, [muted]);
 
+  // Stop speech the moment the screen locks or the app/tab is backgrounded.
+  // Mobile browsers deliberately let already-playing audio keep going in
+  // the background (that's what makes web-based music/podcast players
+  // work), so without this a reply keeps reading itself out after the
+  // phone's screen turns off instead of stopping like the rest of the UI
+  // effectively does.
+  useEffect(() => {
+    const handleVisibilityChange = () => {
+      if (document.hidden) {
+        stopPlaybackRef.current?.();
+        setPlayingId(null);
+      }
+    };
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    return () => document.removeEventListener("visibilitychange", handleVisibilityChange);
+  }, []);
+
   const submit = () => {
     const text = draft.trim();
     if (!text || isStreaming) return;
