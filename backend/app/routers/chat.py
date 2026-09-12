@@ -34,6 +34,11 @@ class ChatRequest(BaseModel):
     history: list[ChatMessageIn] = []
     location: Optional[LocationIn] = None
     role: Optional[str] = None
+    # Echoed back by the frontend from this endpoint's own last
+    # "comparison_locations" event — lets a place-less follow-up ("tell me
+    # again", "batao") keep comparing the same cities instead of collapsing
+    # to the single active location. See the fallback logic below.
+    compared_locations: list[LocationIn] = []
 
 
 STYLE_RULES = (
@@ -193,12 +198,29 @@ async def chat_stream(body: ChatRequest) -> AsyncIterable[ServerSentEvent]:
             if geo:
                 resolved_locations.append(LocationIn(lat=geo.lat, lon=geo.lon, name=geo.name))
 
-    is_comparison = len(resolved_locations) > 1
     source = "extracted"
 
-    if not resolved_locations and body.location is not None:
+    if not resolved_locations and len(body.compared_locations) > 1:
+        # The current message didn't name a place itself (e.g. a bare
+        # follow-up like "tell me again"), but the previous reply compared
+        # multiple cities — keep comparing those same cities rather than
+        # falling back to the single active location, which previously made
+        # the model claim it had no data for a city it had just discussed.
+        resolved_locations = list(body.compared_locations)
+        source = "carried_comparison"
+    elif not resolved_locations and body.location is not None:
         resolved_locations = [body.location]
         source = "current"
+
+    is_comparison = len(resolved_locations) > 1
+
+    # Tells the frontend exactly what to echo back as `compared_locations`
+    # on the next request — empty clears any stale comparison once the
+    # conversation is no longer comparing multiple places.
+    yield ServerSentEvent(
+        event="comparison_locations",
+        data={"locations": [loc.model_dump() for loc in resolved_locations] if is_comparison else []},
+    )
 
     # Only drive the app's active location/map for a single resolved place —
     # a comparison shouldn't silently pick one of several compared cities as

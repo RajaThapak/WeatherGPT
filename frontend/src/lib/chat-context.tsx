@@ -5,7 +5,7 @@ import type { DisplayMessage } from "@/components/chat/ChatPanel";
 import { useLocation } from "@/lib/location-context";
 import { useRole } from "@/lib/role-context";
 import { useAlerts } from "@/lib/alerts-context";
-import { streamChat } from "@/lib/use-chat-stream";
+import { streamChat, type ChatComparisonLocation } from "@/lib/use-chat-stream";
 import { loadSessions, saveSession, deriveTitle, newSessionId, type ChatSession } from "@/lib/chat-storage";
 
 type ChatContextValue = {
@@ -67,6 +67,13 @@ export function ChatProvider({ children }: { children: ReactNode }) {
   // keeps merely loading/restoring the app from silently refreshing every
   // session's "last activity" clock (which would defeat auto-expiry).
   const activityRef = useRef(false);
+  // The cities (if any) the LAST reply actually compared, per the backend's
+  // own "comparison_locations" event — echoed back on the next send() so a
+  // place-less follow-up ("tell me again") keeps comparing the same cities
+  // instead of the backend silently collapsing to just the single active
+  // location. Reset whenever the conversation itself changes so a new/other
+  // chat never inherits a stale comparison.
+  const comparedLocationsRef = useRef<ChatComparisonLocation[]>([]);
 
   useEffect(() => {
     const loaded = loadSessions();
@@ -105,6 +112,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
 
   const startNewChat = () => {
     activityRef.current = false;
+    comparedLocationsRef.current = [];
     setSessionId(newSessionId());
     createdAtRef.current = Date.now();
     setMessages([]);
@@ -115,6 +123,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
     const target = sessions.find((s) => s.id === id);
     if (!target) return;
     activityRef.current = false;
+    comparedLocationsRef.current = [];
     setSessionId(target.id);
     createdAtRef.current = target.createdAt;
     setMessages(target.messages.map((m) => ({ ...m, autoPlay: false })));
@@ -144,8 +153,11 @@ export function ChatProvider({ children }: { children: ReactNode }) {
     let resolvedName = location.name;
 
     await streamChat(
-      { message: text, history, location, role },
+      { message: text, history, location, role, compared_locations: comparedLocationsRef.current },
       {
+        onComparisonLocations: (locations) => {
+          comparedLocationsRef.current = locations;
+        },
         onLocation: (loc) => {
           resolvedName = loc.name;
           setLocation({ lat: loc.lat, lon: loc.lon, name: loc.name });

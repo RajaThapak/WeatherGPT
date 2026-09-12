@@ -13,12 +13,18 @@ export type ChatActionEvent =
 // anything by itself, unlike ChatActionEvent above (see chat-context.tsx
 // and ChatPanel.tsx for how a click on one of these actually does something).
 export type ChatSuggestionEvent = { type: "enable_alerts" | "set_role" };
+// Which cities (if any) this reply actually compared — echoed back as
+// `compared_locations` on the next request so a place-less follow-up ("tell
+// me again") keeps comparing the same cities instead of losing them. Empty
+// means this reply wasn't a comparison, clearing any previously-remembered set.
+export type ChatComparisonLocation = { lat: number; lon: number; name: string };
 
 type Callbacks = {
   onLocation?: (loc: ChatLocationEvent) => void;
   onWeather?: (weather: WeatherResponse) => void;
   onAction?: (action: ChatActionEvent) => void;
   onSuggestion?: (suggestion: ChatSuggestionEvent) => void;
+  onComparisonLocations?: (locations: ChatComparisonLocation[]) => void;
   onToken?: (text: string) => void;
   onDone?: () => void;
   onError?: (message: string) => void;
@@ -32,6 +38,7 @@ export async function streamChat(
     history: ChatMessage[];
     location: { lat: number; lon: number; name: string } | null;
     role?: string | null;
+    compared_locations?: ChatComparisonLocation[];
   },
   callbacks: Callbacks,
   signal?: AbortSignal,
@@ -100,6 +107,9 @@ function dispatch(rawEvent: string, callbacks: Callbacks) {
       break;
     case "suggestion":
       callbacks.onSuggestion?.(data as ChatSuggestionEvent);
+      break;
+    case "comparison_locations":
+      callbacks.onComparisonLocations?.((data as { locations: ChatComparisonLocation[] }).locations);
       break;
     case "token":
       callbacks.onToken?.((data as { text: string }).text);

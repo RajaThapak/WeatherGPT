@@ -118,8 +118,16 @@ export function ChatPanel({
   // synthesize the entire reply before any audio plays — that full-message
   // round trip was the source of the noticeable delay after longer replies.
   // Falls back to the whole text as one "sentence" if no punctuation is found.
+  //
+  // The body group treats a "." as ordinary content (not a boundary) when
+  // it's immediately followed by a digit, e.g. "30.6°C" — otherwise a
+  // decimal point anywhere in the reply (temperatures, coordinates, etc.)
+  // made `[^.!?]+` stop dead there with no way to resume, since it excludes
+  // periods entirely; only text after the LAST decimal point in the whole
+  // message ever matched, so most replies got silently truncated to just
+  // their final clause before being spoken.
   function splitIntoSentences(text: string): string[] {
-    const matches = text.match(/[^.!?]+[.!?]+(\s+|$)/g);
+    const matches = text.match(/(?:[^.!?]|\.(?=\d))+[.!?]+(?=\s|$)/g);
     if (!matches || matches.length === 0) return [text.trim()];
     return matches.map((s) => s.trim()).filter(Boolean);
   }
