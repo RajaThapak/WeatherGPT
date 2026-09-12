@@ -1,3 +1,4 @@
+import asyncio
 import json
 import logging
 import xml.etree.ElementTree as ET
@@ -8,7 +9,7 @@ from pywebpush import WebPushException, webpush
 
 from app.config import settings
 from app.db import get_pool
-from app.http_client import get_http_client
+from app.http_client import get_background_http_client
 from app.services.email_alerts import send_email_alert
 
 logger = logging.getLogger("weathergpt.alerts")
@@ -104,21 +105,38 @@ def _parse_rss_links(rss_text: str) -> list[str]:
     return [item.findtext("link") for item in root.findall(".//item") if item.findtext("link")]
 
 
+async def _fetch_cap_xml(http, link: str) -> str | None:
+    try:
+        resp = await http.get(link)
+        resp.raise_for_status()
+        return resp.text
+    except Exception as exc:
+        logger.warning("Failed to fetch CAP alert %s: %s", link, exc)
+        return None
+
+
 async def fetch_and_ingest_alerts() -> int:
     """Polls IMD's public CAP feed, parses each alert, and upserts into
     weather_alerts. Returns how many were ingested."""
-    http = get_http_client()
+    http = get_background_http_client()
     resp = await http.get(settings.cap_feed_url)
     resp.raise_for_status()
     links = _parse_rss_links(resp.text)
 
+    # Fetch every linked CAP document concurrently rather than one at a
+    # time — sequentially awaiting 9-10 individual S3 fetches turned each
+    # poll cycle into many real seconds of wall time, during which this
+    # same process's live chat/weather requests were observed to slow down
+    # dramatically (see get_background_http_client's docstring).
+    xml_texts = await asyncio.gather(*(_fetch_cap_xml(http, link) for link in links))
+
     pool = await get_pool(settings.database_url)
     ingested = 0
-    for link in links:
+    for link, xml_text in zip(links, xml_texts):
+        if xml_text is None:
+            continue
         try:
-            alert_resp = await http.get(link)
-            alert_resp.raise_for_status()
-            parsed = _parse_cap_xml(alert_resp.text)
+            parsed = _parse_cap_xml(xml_text)
             if parsed is None:
                 continue
             async with pool.acquire() as conn:
